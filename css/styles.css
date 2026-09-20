@@ -349,7 +349,11 @@ html, body {
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
-  z-index: 100;
+  /* Must clear Leaflet's internal panes, which run z-index 200-700 (tiles 200,
+     overlay 400, shadow 500, marker 600, tooltip 650, popup 700) and its
+     controls at 800. Below 800 the 2D map paints straight over this panel and
+     it only becomes visible when the map layer is hidden in 3D globe mode. */
+  z-index: 900;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.75), var(--glow-subtle);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -466,7 +470,8 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  z-index: 40;
+  /* Same reason as .side-dashboard-pane: must sit above Leaflet's panes. */
+  z-index: 850;
 }
 
 .hud-panel {

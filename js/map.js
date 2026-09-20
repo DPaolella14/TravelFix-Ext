@@ -48,8 +48,10 @@ export class TravelFixRegionalMap {
       worldCopyJump: true
     }).setView([20, 0], 3);
 
-    // Zoom control in top right
-    L.control.zoom({ position: 'topright' }).addTo(this.map);
+    // No default Leaflet zoom control: the HUD already provides Zoom In /
+    // Zoom Out / Reset, and Leaflet pins its control container at z-index
+    // 1000, which put the +/- buttons on top of the docked panel's close
+    // button in the top-right corner.
 
     // High quality, 100% clean Tile Layers (Zero watermarks, no API key required)
     const darkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
