@@ -40,9 +40,11 @@ TF_URL=http://localhost:8090/index.html node tests/run-all.js
 | Suite | Covers |
 |---|---|
 | `test-chat` | Trip Chat send path, live re-render of replies, subscriber isolation |
-| `test-plan` | Showcase itinerary resolves on every day; budget arithmetic |
+| `test-plan` | Catalogue integrity (no duplicate ids) and budget arithmetic |
+| `test-sched` | Empty default plan, day/time picker, moving items between days |
+| `test-stay` | Hotel reservation merged into the scheduling dialog: nights, guests, room tier, live pricing, consecutive-night blocks |
 | `test-ocean` | Ocean panel quick picks and Close Explorer |
-| `test-xss` | 10 injection vectors: chat (live + persisted), collaborators, geocoder results, generated destinations, booking modal, plan titles, map pin labels |
+| `test-xss` | 10 injection vectors: chat (live + persisted), collaborators, geocoder results, generated destinations, stay dialog, plan titles, map pin labels |
 | `test-smoke` | Nothing broke: normal rendering, images, map markers, 3D globe init |
 
 ## Using this as a ground-truth set
@@ -57,7 +59,9 @@ cd /tmp/tf-baseline && sed -i 's/^PORT = 8080/PORT = 8090/' server.py && python 
 cd - && TF_URL=http://localhost:8090/index.html node tests/run-all.js
 ```
 
-Expected: **27 of 32 checks fail on the baseline, 0 fail on HEAD.**
+Expected: the baseline fails the great majority of these checks; HEAD passes all 91.
+The suite has grown well past the four original defects, so many newer checks
+cover features that simply do not exist in the baseline at all.
 
 The known defects, with locations in the baseline commit:
 

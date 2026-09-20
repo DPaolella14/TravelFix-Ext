@@ -25,6 +25,19 @@ export const TIME_SLOT_PRESETS = [
 /** Hotels are booked by the night; this is the default check-in time. */
 export const DEFAULT_CHECK_IN = { id: 'checkin', label: 'Check-in', start: '15:00', end: '' };
 
+/** Room options offered when reserving a stay. Surcharge is per night. */
+export const ROOM_TIERS = [
+  { id: 'signature', label: 'Signature Suite', surcharge: 0 },
+  { id: 'sky-villa', label: 'Executive Sky Villa', surcharge: 280 },
+  { id: 'penthouse', label: 'Presidential Penthouse', surcharge: 600 }
+];
+
+export const GUEST_OPTIONS = [1, 2, 3, 4];
+
+export function roomTierById(id) {
+  return ROOM_TIERS.find(t => t.id === id) || ROOM_TIERS[0];
+}
+
 /** "14:30" -> "2:30 PM". Returns '' for anything unparseable. */
 export function formatTime(hhmm) {
   if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return '';
@@ -150,7 +163,17 @@ export class TravelPlanner {
           activityId: a.activityId,
           slot: normaliseSlot(a.slot)
         }));
-        if (existing.stay) existing.stay = { livingSpaceId: existing.stay.livingSpaceId, slot: normaliseSlot(existing.stay.slot) };
+        if (existing.stay) {
+          existing.stay = {
+            livingSpaceId: existing.stay.livingSpaceId,
+            slot: existing.stay.slot ? normaliseSlot(existing.stay.slot) : null,
+            guests: existing.stay.guests || 2,
+            roomTierId: existing.stay.roomTierId || ROOM_TIERS[0].id,
+            isCheckIn: existing.stay.isCheckIn !== false,
+            nightIndex: existing.stay.nightIndex || 0,
+            nights: existing.stay.nights || 1
+          };
+        }
         else existing.stay = null;
         return existing;
       }
@@ -315,16 +338,105 @@ export class TravelPlanner {
    * Put a stay on a day. One stay per day — assigning replaces whatever was
    * there. Returns the day it landed on.
    */
-  setDayStay(dayIndex, livingSpaceId, slot = DEFAULT_CHECK_IN, destination = null) {
+  setDayStay(dayIndex, livingSpaceId, slot = DEFAULT_CHECK_IN, destination = null, opts = {}) {
     const day = this.plan.days[dayIndex];
     if (!day) return null;
     if (destination) {
       this.registerDestination(destination);
       day.destinationId = destination.id;
     }
-    day.stay = livingSpaceId ? { livingSpaceId, slot: normaliseSlot(slot) } : null;
+    day.stay = livingSpaceId ? {
+      livingSpaceId,
+      slot: normaliseSlot(slot),
+      guests: opts.guests || 2,
+      roomTierId: opts.roomTierId || ROOM_TIERS[0].id,
+      isCheckIn: opts.isCheckIn !== false,
+      nightIndex: opts.nightIndex || 0,
+      nights: opts.nights || 1
+    } : null;
     this.savePlan();
     return day;
+  }
+
+  /**
+   * Reserve a hotel across consecutive nights starting at startIndex.
+   * A booking of three nights occupies three days; only the first carries the
+   * check-in time, the rest are continuation nights.
+   */
+  setStayRange(startIndex, nights, livingSpaceId, slot, destination = null, opts = {}) {
+    if (startIndex < 0 || startIndex >= WEEKDAYS.length) return false;
+    const span = Math.max(1, Math.min(nights || 1, WEEKDAYS.length - startIndex));
+    if (destination) this.registerDestination(destination);
+
+    for (let i = 0; i < span; i++) {
+      const day = this.plan.days[startIndex + i];
+      if (!day) break;
+      if (destination) day.destinationId = destination.id;
+      day.stay = {
+        livingSpaceId,
+        slot: i === 0 ? normaliseSlot(slot) : null,
+        guests: opts.guests || 2,
+        roomTierId: opts.roomTierId || ROOM_TIERS[0].id,
+        isCheckIn: i === 0,
+        nightIndex: i,
+        nights: span
+      };
+    }
+    this.savePlan();
+    return true;
+  }
+
+  /**
+   * The contiguous run of days sharing one hotel booking, found from any day
+   * inside it. Used so Move and Remove act on the whole reservation.
+   */
+  getStayBlock(dayIndex) {
+    const day = this.plan.days[dayIndex];
+    if (!day || !day.stay) return null;
+    const id = day.stay.livingSpaceId;
+
+    let start = dayIndex;
+    while (start > 0) {
+      const prev = this.plan.days[start - 1];
+      if (prev && prev.stay && prev.stay.livingSpaceId === id) start--;
+      else break;
+    }
+    let end = dayIndex;
+    while (end < this.plan.days.length - 1) {
+      const next = this.plan.days[end + 1];
+      if (next && next.stay && next.stay.livingSpaceId === id) end++;
+      else break;
+    }
+
+    const first = this.plan.days[start].stay;
+    return {
+      startIndex: start,
+      nights: (end - start) + 1,
+      livingSpaceId: id,
+      slot: first.slot,
+      guests: first.guests || 2,
+      roomTierId: first.roomTierId || ROOM_TIERS[0].id
+    };
+  }
+
+  /** Clear an entire reservation, given any day inside it. */
+  removeStayBlock(dayIndex) {
+    const block = this.getStayBlock(dayIndex);
+    if (!block) return false;
+    for (let i = 0; i < block.nights; i++) {
+      const day = this.plan.days[block.startIndex + i];
+      if (day) day.stay = null;
+    }
+    this.savePlan();
+    return true;
+  }
+
+  /** Nightly cost of a stay entry, including any room-tier surcharge. */
+  nightlyRate(stayEntry, livingSpace) {
+    if (!livingSpace) return 0;
+    const base = livingSpace.pricePerNight || 0;
+    const tier = roomTierById(stayEntry && stayEntry.roomTierId);
+    return base + tier.surcharge;
   }
 
   removeDayStay(dayIndex) {
@@ -456,7 +568,7 @@ export class TravelPlanner {
     this.plan.days.forEach(day => {
       if (day.stay && day.stay.livingSpaceId) {
         const found = this.findLivingSpace(day.stay.livingSpaceId);
-        if (found) livingSpacesCost += found.stay.pricePerNight || 0;
+        if (found) livingSpacesCost += this.nightlyRate(day.stay, found.stay);
       }
       (day.activities || []).forEach(entry => {
         const found = this.findActivity(entry.activityId);
@@ -499,6 +611,14 @@ export class TravelPlanner {
         destination: destination || this.findDestination(day.destinationId),
         livingSpace,
         staySlot: day.stay ? day.stay.slot : null,
+        stayBooking: day.stay ? {
+          guests: day.stay.guests || 2,
+          roomTier: roomTierById(day.stay.roomTierId),
+          isCheckIn: day.stay.isCheckIn !== false,
+          nightIndex: day.stay.nightIndex || 0,
+          nights: day.stay.nights || 1,
+          nightlyRate: livingSpace ? this.nightlyRate(day.stay, livingSpace) : 0
+        } : null,
         activities,
         transit: day.transit,
         notes: day.notes,

@@ -8,7 +8,7 @@
 import { UniversalSearchEngine, GLOBAL_GEO_INDEX } from './geo-search.js';
 import { esc, safeUrl } from './escape.js';
 import {
-  WEEKDAYS, TIME_SLOT_PRESETS, DEFAULT_CHECK_IN,
+  WEEKDAYS, TIME_SLOT_PRESETS, DEFAULT_CHECK_IN, ROOM_TIERS, GUEST_OPTIONS,
   formatTime, describeSlot, normaliseSlot
 } from './planner.js';
 
@@ -77,9 +77,6 @@ export class TravelFixUI {
     this.navModeGlobe = document.getElementById('nav-mode-globe');
 
     // Modals
-    this.bookingModal = document.getElementById('booking-modal');
-    this.bookingModalBody = document.getElementById('booking-modal-body');
-    this.closeBookingBtn = document.getElementById('btn-close-booking');
 
     this.inviteModal = document.getElementById('invite-modal');
     this.closeInviteBtn = document.getElementById('btn-close-invite');
@@ -266,12 +263,6 @@ export class TravelFixUI {
       });
     }
 
-    // 9. Booking Modal Close
-    if (this.closeBookingBtn) {
-      this.closeBookingBtn.addEventListener('click', () => {
-        this.bookingModal.classList.add('hidden');
-      });
-    }
   }
 
   // ==========================================
@@ -868,41 +859,53 @@ export class TravelFixUI {
    * One dialog for every scheduling decision: adding a stay or activity, and
    * moving or retiming one that is already on the plan.
    *
+   * For a stay this is also the reservation form — nights, guests and room
+   * tier live here rather than in a separate booking modal, because a
+   * check-in date chosen in one dialog and a day chosen in the next was two
+   * places to say the same thing.
+   *
    * kind          'stay' | 'activity'
    * item          the living space or activity object
    * destination   where it belongs (may be null when rescheduling)
    * fromDayIndex  set when the item is already scheduled (enables move/remove)
    */
   openScheduleDialog({ kind, item, destination = null, fromDayIndex = null }) {
+    const isStay = kind === 'stay';
     const isReschedule = fromDayIndex !== null;
     const days = this.planner.getDays();
-    const title = kind === 'stay' ? item.name : item.title;
-    const price = kind === 'stay' ? `$${item.pricePerNight}/night` : `$${item.price}`;
+    const title = isStay ? item.name : item.title;
 
-    // Preselect: the day it is already on, else the first day at this
-    // destination, else the first day with nothing scheduled, else Monday.
-    let selectedDay = isReschedule ? fromDayIndex : days.findIndex(d => destination && d.destinationId === destination.id);
+    // Existing booking details, when editing one.
+    const block = (isStay && isReschedule) ? this.planner.getStayBlock(fromDayIndex) : null;
+
+    let selectedDay = isReschedule
+      ? (block ? block.startIndex : fromDayIndex)
+      : days.findIndex(d => destination && d.destinationId === destination.id);
     if (selectedDay < 0) selectedDay = days.findIndex(d => !d.stay && !(d.activities || []).length);
     if (selectedDay < 0) selectedDay = 0;
 
-    // Preselect a time: whatever it already has, else the activity's own
-    // suggested slot, else a sensible default for the kind.
+    let nights = block ? block.nights : 1;
+    let guests = block ? block.guests : 2;
+    let roomTierId = block ? block.roomTierId : ROOM_TIERS[0].id;
+
     let currentSlot = null;
     if (isReschedule) {
-      const day = days[fromDayIndex];
-      currentSlot = kind === 'stay'
-        ? (day.stay && day.stay.slot)
-        : ((day.activities || []).find(a => a.activityId === item.id) || {}).slot;
+      if (isStay) currentSlot = block ? block.slot : null;
+      else {
+        const day = days[fromDayIndex];
+        currentSlot = ((day.activities || []).find(a => a.activityId === item.id) || {}).slot;
+      }
     }
-    if (!currentSlot && kind === 'activity') {
+    if (!currentSlot && !isStay) {
       const suggested = this.parseSuggestedSlot(item.timeSlot);
       if (suggested) currentSlot = { id: 'custom', label: 'Suggested', ...suggested };
     }
-    if (!currentSlot) currentSlot = kind === 'stay' ? { ...DEFAULT_CHECK_IN } : { ...TIME_SLOT_PRESETS[0] };
-
+    if (!currentSlot) currentSlot = isStay ? { ...DEFAULT_CHECK_IN } : { ...TIME_SLOT_PRESETS[0] };
     let selectedSlot = normaliseSlot(currentSlot);
 
-    const dayChips = days.map((d, idx) => {
+    const maxNights = () => WEEKDAYS.length - selectedDay;
+
+    const renderDayChips = () => days.map((d, idx) => {
       const busy = (d.activities || []).length + (d.stay ? 1 : 0);
       return `
         <button type="button" class="day-chip ${idx === selectedDay ? 'active' : ''}" data-day-index="${idx}">
@@ -918,44 +921,107 @@ export class TravelFixUI {
         <span class="slot-chip-time">${esc(formatTime(sl.start))} – ${esc(formatTime(sl.end))}</span>
       </button>`).join('');
 
-    const isCustom = !TIME_SLOT_PRESETS.some(sl => sl.id === selectedSlot.id);
+    const isCustom = !TIME_SLOT_PRESETS.some(sl => sl.id === selectedSlot.id) && !isStay;
+
+    // ---- stay-only reservation block -------------------------------------
+    const stayFieldsHtml = !isStay ? '' : `
+      <div class="schedule-section">
+        <label class="schedule-label">How many nights?</label>
+        <div class="nights-row">
+          <button type="button" class="nights-step" data-step="-1" aria-label="Fewer nights">−</button>
+          <span class="nights-value"><b class="nights-count">${nights}</b> <span class="nights-word">night${nights === 1 ? '' : 's'}</span></span>
+          <button type="button" class="nights-step" data-step="1" aria-label="More nights">+</button>
+          <span class="nights-range"></span>
+        </div>
+      </div>
+
+      <div class="schedule-section schedule-two-col">
+        <div>
+          <label class="schedule-label" for="sched-guests">Guests</label>
+          <select id="sched-guests" class="sched-select">
+            ${GUEST_OPTIONS.map(n => `<option value="${n}" ${n === guests ? 'selected' : ''}>${n} guest${n === 1 ? '' : 's'}${n === 4 ? '+' : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="schedule-label" for="sched-room">Room</label>
+          <select id="sched-room" class="sched-select">
+            ${ROOM_TIERS.map(t => `<option value="${esc(t.id)}" ${t.id === roomTierId ? 'selected' : ''}>${esc(t.label)}${t.surcharge ? ` (+$${t.surcharge}/nt)` : ''}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div class="schedule-section">
+        <div class="stay-price-breakdown">
+          <div class="price-line"><span class="pl-label"></span><span class="pl-value"></span></div>
+          <div class="price-line tier-line"><span class="pl-label"></span><span class="pl-value"></span></div>
+          <div class="price-line total-line"><span>Estimated stay cost</span><span class="stay-total"></span></div>
+        </div>
+        <p class="stay-estimate-note">Planning estimate only — taxes and property fees are not included, and nothing is reserved with the hotel.</p>
+      </div>`;
 
     const container = document.createElement('div');
     container.innerHTML = `
       <div class="quick-modal-overlay tf-schedule-overlay">
-        <div class="quick-modal-content schedule-dialog">
-          <h3>${isReschedule ? 'Reschedule' : (kind === 'stay' ? 'Add Living Space to Plan' : 'Add Activity to Plan')}</h3>
-          <p class="schedule-subject">
-            <b>${esc(title)}</b>
-            <span class="schedule-price">${esc(price)}</span>
-            ${destination ? `<span class="schedule-dest">${esc(destination.name)}</span>` : ''}
-          </p>
+        <div class="quick-modal-content schedule-dialog ${isStay ? 'stay-dialog' : ''}">
+          <h3>${isReschedule ? (isStay ? 'Edit Reservation' : 'Reschedule') : (isStay ? 'Reserve Living Space' : 'Add Activity to Plan')}</h3>
+
+          ${isStay ? `
+            <div class="stay-head">
+              <div class="stay-thumb" style="background-image: url('${safeUrl(item.image)}');"></div>
+              <div class="stay-head-info">
+                <b>${esc(item.name)}</b>
+                <span class="stay-head-type">${esc(item.type || '')}</span>
+                <span class="stay-head-meta">⭐ ${esc(item.rating || '')} · $${item.pricePerNight}/night${destination ? ` · ${esc(destination.name)}` : ''}</span>
+              </div>
+            </div>
+          ` : `
+            <p class="schedule-subject">
+              <b>${esc(title)}</b>
+              <span class="schedule-price">$${item.price}</span>
+              ${destination ? `<span class="schedule-dest">${esc(destination.name)}</span>` : ''}
+            </p>
+          `}
 
           <div class="schedule-section">
-            <label class="schedule-label">Which day?</label>
-            <div class="day-chip-row">${dayChips}</div>
+            <label class="schedule-label">${isStay ? 'Check-in day' : 'Which day?'}</label>
+            <div class="day-chip-row">${renderDayChips()}</div>
           </div>
 
+          ${stayFieldsHtml}
+
           <div class="schedule-section">
-            <label class="schedule-label">${kind === 'stay' ? 'Check-in time' : 'Time slot'}</label>
+            <label class="schedule-label">${isStay ? 'Check-in time' : 'Time slot'}</label>
             <div class="slot-chip-row">
-              ${presetChips}
+              ${isStay ? `
+                <button type="button" class="slot-chip active" data-slot-id="checkin">
+                  <span class="slot-chip-name">Standard</span>
+                  <span class="slot-chip-time">3:00 PM</span>
+                </button>
+                <button type="button" class="slot-chip" data-slot-id="early">
+                  <span class="slot-chip-name">Early</span>
+                  <span class="slot-chip-time">12:00 PM</span>
+                </button>
+                <button type="button" class="slot-chip" data-slot-id="late">
+                  <span class="slot-chip-name">Late</span>
+                  <span class="slot-chip-time">8:00 PM</span>
+                </button>
+              ` : presetChips}
               <button type="button" class="slot-chip slot-chip-custom ${isCustom ? 'active' : ''}" data-slot-id="custom">
                 <span class="slot-chip-name">Custom</span>
-                <span class="slot-chip-time">Set exact times</span>
+                <span class="slot-chip-time">Set exact time${isStay ? '' : 's'}</span>
               </button>
             </div>
             <div class="custom-time-row" ${isCustom ? '' : 'hidden'}>
-              <label>Start <input type="time" class="sched-start" value="${esc(selectedSlot.start)}"></label>
-              <label>End <input type="time" class="sched-end" value="${esc(selectedSlot.end)}"></label>
+              <label>${isStay ? 'Arrive' : 'Start'} <input type="time" class="sched-start" value="${esc(selectedSlot.start)}"></label>
+              ${isStay ? '' : `<label>End <input type="time" class="sched-end" value="${esc(selectedSlot.end)}"></label>`}
             </div>
           </div>
 
           <div class="quick-modal-buttons">
             <button type="button" class="btn btn-secondary btn-sched-cancel">Cancel</button>
-            ${isReschedule ? '<button type="button" class="btn btn-danger btn-sched-remove">Remove from plan</button>' : ''}
+            ${isReschedule ? `<button type="button" class="btn btn-danger btn-sched-remove">${isStay ? 'Cancel reservation' : 'Remove from plan'}</button>` : ''}
             <button type="button" class="btn btn-primary btn-sched-confirm">
-              ${isReschedule ? 'Save changes' : 'Add to plan'}
+              ${isReschedule ? 'Save changes' : (isStay ? 'Add stay to plan' : 'Add to plan')}
             </button>
           </div>
         </div>
@@ -967,13 +1033,68 @@ export class TravelFixUI {
     const endInput = container.querySelector('.sched-end');
     const close = () => container.remove();
 
+    // ---- live stay summary ------------------------------------------------
+    const guestsSelect = container.querySelector('#sched-guests');
+    const roomSelect = container.querySelector('#sched-room');
+
+    const updateStaySummary = () => {
+      if (!isStay) return;
+      nights = Math.max(1, Math.min(nights, maxNights()));
+      const tier = ROOM_TIERS.find(t => t.id === roomTierId) || ROOM_TIERS[0];
+      const base = item.pricePerNight || 0;
+      const total = (base + tier.surcharge) * nights;
+
+      container.querySelector('.nights-count').textContent = nights;
+      container.querySelector('.nights-word').textContent = nights === 1 ? 'night' : 'nights';
+
+      const checkout = selectedDay + nights;
+      const checkoutLabel = checkout < WEEKDAYS.length
+        ? `${WEEKDAYS[checkout]} ${this.planner.getDayDate(checkout)}`
+        : 'after Sunday';
+      container.querySelector('.nights-range').textContent =
+        `${WEEKDAYS[selectedDay]} → check out ${checkoutLabel}`;
+
+      const lines = container.querySelectorAll('.stay-price-breakdown .price-line');
+      lines[0].querySelector('.pl-label').textContent = `$${base.toLocaleString()} × ${nights} night${nights === 1 ? '' : 's'}`;
+      lines[0].querySelector('.pl-value').textContent = `$${(base * nights).toLocaleString()}`;
+      if (tier.surcharge) {
+        lines[1].hidden = false;
+        lines[1].querySelector('.pl-label').textContent = `${tier.label} upgrade × ${nights}`;
+        lines[1].querySelector('.pl-value').textContent = `$${(tier.surcharge * nights).toLocaleString()}`;
+      } else {
+        lines[1].hidden = true;
+      }
+      container.querySelector('.stay-total').textContent = `$${total.toLocaleString()}`;
+
+      container.querySelectorAll('.nights-step').forEach(btn => {
+        const step = parseInt(btn.dataset.step, 10);
+        btn.disabled = (step < 0 && nights <= 1) || (step > 0 && nights >= maxNights());
+      });
+    };
+
     container.querySelectorAll('.day-chip').forEach(chip => {
       chip.addEventListener('click', () => {
         container.querySelectorAll('.day-chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         selectedDay = parseInt(chip.dataset.dayIndex, 10);
+        updateStaySummary();
       });
     });
+
+    container.querySelectorAll('.nights-step').forEach(btn => {
+      btn.addEventListener('click', () => {
+        nights += parseInt(btn.dataset.step, 10);
+        updateStaySummary();
+      });
+    });
+    if (guestsSelect) guestsSelect.addEventListener('change', () => { guests = parseInt(guestsSelect.value, 10); });
+    if (roomSelect) roomSelect.addEventListener('change', () => { roomTierId = roomSelect.value; updateStaySummary(); });
+
+    const STAY_SLOTS = {
+      checkin: { id: 'checkin', label: 'Check-in', start: '15:00', end: '' },
+      early:   { id: 'early',   label: 'Early check-in', start: '12:00', end: '' },
+      late:    { id: 'late',    label: 'Late check-in', start: '20:00', end: '' }
+    };
 
     container.querySelectorAll('.slot-chip').forEach(chip => {
       chip.addEventListener('click', () => {
@@ -982,17 +1103,29 @@ export class TravelFixUI {
         const id = chip.dataset.slotId;
         if (id === 'custom') {
           customRow.hidden = false;
-          selectedSlot = { id: 'custom', label: 'Custom', start: startInput.value, end: endInput.value };
+          selectedSlot = {
+            id: 'custom',
+            label: isStay ? 'Check-in' : 'Custom',
+            start: startInput.value,
+            end: endInput ? endInput.value : ''
+          };
         } else {
           customRow.hidden = true;
-          selectedSlot = { ...TIME_SLOT_PRESETS.find(s => s.id === id) };
+          selectedSlot = isStay
+            ? { ...STAY_SLOTS[id] }
+            : { ...TIME_SLOT_PRESETS.find(s => s.id === id) };
         }
       });
     });
 
-    [startInput, endInput].forEach(input => {
+    [startInput, endInput].filter(Boolean).forEach(input => {
       input.addEventListener('change', () => {
-        selectedSlot = { id: 'custom', label: 'Custom', start: startInput.value, end: endInput.value };
+        selectedSlot = {
+          id: 'custom',
+          label: isStay ? 'Check-in' : 'Custom',
+          start: startInput.value,
+          end: endInput ? endInput.value : ''
+        };
       });
     });
 
@@ -1004,7 +1137,7 @@ export class TravelFixUI {
     const removeBtn = container.querySelector('.btn-sched-remove');
     if (removeBtn) {
       removeBtn.addEventListener('click', () => {
-        if (kind === 'stay') this.planner.removeDayStay(fromDayIndex);
+        if (isStay) this.planner.removeStayBlock(fromDayIndex);
         else this.planner.removeActivityFromDay(fromDayIndex, item.id);
         close();
         this.renderPlanner();
@@ -1015,9 +1148,11 @@ export class TravelFixUI {
     container.querySelector('.btn-sched-confirm').addEventListener('click', () => {
       const dayName = this.planner.getDay(selectedDay).dayName;
 
-      if (kind === 'stay') {
-        if (isReschedule) this.planner.moveStay(fromDayIndex, selectedDay, selectedSlot);
-        else this.planner.setDayStay(selectedDay, item.id, selectedSlot, destination);
+      if (isStay) {
+        // Editing an existing reservation clears the old block first, so
+        // shortening a stay does not leave orphan nights behind.
+        if (isReschedule) this.planner.removeStayBlock(fromDayIndex);
+        this.planner.setStayRange(selectedDay, nights, item.id, selectedSlot, destination, { guests, roomTierId });
       } else {
         if (isReschedule) this.planner.moveActivity(fromDayIndex, item.id, selectedDay, selectedSlot);
         else this.planner.addActivityToDay(selectedDay, item.id, selectedSlot, destination);
@@ -1026,10 +1161,14 @@ export class TravelFixUI {
       close();
       this.renderPlanner();
       this.showToast(
-        `${isReschedule ? 'Moved' : 'Added'} ${title} — ${dayName}, ${describeSlot(selectedSlot)}`,
+        isStay
+          ? `${title} — ${nights} night${nights === 1 ? '' : 's'} from ${dayName}`
+          : `${isReschedule ? 'Moved' : 'Added'} ${title} — ${dayName}, ${describeSlot(selectedSlot)}`,
         'success'
       );
     });
+
+    updateStaySummary();
   }
 
   promptAssignStayToDay(stay, dest) {
@@ -1382,15 +1521,22 @@ export class TravelFixUI {
               ${item.livingSpace ? `
                 <div class="item-title">${esc(item.livingSpace.name)}</div>
                 <div class="item-sub">${esc(item.livingSpace.type)} &bull; \u2B50 ${esc(item.livingSpace.rating)}</div>
-                <div class="item-slot">\u{1F552} ${esc(describeSlot(item.staySlot))}</div>
+                ${item.stayBooking && item.stayBooking.isCheckIn ? `
+                  <div class="item-slot">\u{1F552} ${esc(describeSlot(item.staySlot))}</div>
+                ` : `
+                  <div class="item-slot item-slot-continued">\u{1F319} Night ${(item.stayBooking ? item.stayBooking.nightIndex : 0) + 1} of ${item.stayBooking ? item.stayBooking.nights : 1}</div>
+                `}
+                <div class="item-booking-meta">
+                  ${item.stayBooking ? `${item.stayBooking.guests} guest${item.stayBooking.guests === 1 ? '' : 's'} &bull; ${esc(item.stayBooking.roomTier.label)}` : ''}
+                </div>
               ` : `
                 <div class="item-empty">No stay booked for this day.</div>
               `}
             </div>
             ${item.livingSpace ? `
               <div class="item-actions-col">
-                <div class="item-cost">$${item.livingSpace.pricePerNight} <small>/ nt</small></div>
-                <button class="btn-reschedule" data-kind="stay" data-day-idx="${item.index}" title="Change day or time">Move</button>
+                <div class="item-cost">$${(item.stayBooking ? item.stayBooking.nightlyRate : item.livingSpace.pricePerNight).toLocaleString()} <small>/ nt</small></div>
+                <button class="btn-reschedule" data-kind="stay" data-day-idx="${item.index}" title="Edit this reservation">Edit</button>
               </div>
             ` : ''}
           </div>
@@ -1719,95 +1865,15 @@ export class TravelFixUI {
   // BOOKING MODAL
   // ==========================================
 
+  /**
+   * Reserving a stay and scheduling it are the same decision, so this is now
+   * the scheduling dialog in its stay form. The separate booking modal asked
+   * for check-in and check-out dates and then handed you a second dialog that
+   * asked which day — two places to answer the same question, and the first
+   * answer was thrown away.
+   */
   openBookingModal(stay, dest) {
-    this.bookingModal.classList.remove('hidden');
-
-    this.bookingModalBody.innerHTML = `
-      <div class="booking-dialog-container">
-        <div class="booking-left-media" style="background-image: url('${safeUrl(stay.image)}');">
-          <div class="booking-badge-overlay">
-            <span class="badge badge-cyan">${esc(dest.name)}, ${esc(dest.country)}</span>
-            <span class="badge badge-emerald">⭐ ${stay.rating || 4.9}</span>
-          </div>
-          <div class="booking-quote">"${esc(stay.description)}"</div>
-        </div>
-
-        <div class="booking-right-form">
-          <h2 class="booking-heading">Reserve Living Space</h2>
-          <div class="booking-hotel-name">${esc(stay.name)}</div>
-          <div class="booking-hotel-type">${esc(stay.type)} &bull; ${esc(stay.address || dest.name)}</div>
-
-          <form id="booking-form" class="booking-form">
-            <div class="form-row">
-              <div class="form-group">
-                <label>Check-In Date</label>
-                <input type="date" class="form-control" value="2026-10-12" required />
-              </div>
-              <div class="form-group">
-                <label>Check-Out Date</label>
-                <input type="date" class="form-control" value="2026-10-15" required />
-              </div>
-            </div>
-
-            <div class="form-row">
-              <div class="form-group">
-                <label>Guests</label>
-                <select class="form-control">
-                  <option>1 Guest</option>
-                  <option selected>2 Guests</option>
-                  <option>3 Guests</option>
-                  <option>4+ Guests</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>Room Tier</label>
-                <select class="form-control">
-                  <option selected>Signature Panoramic Suite</option>
-                  <option>Executive Sky Villa (+$280/nt)</option>
-                  <option>Presidential View Penthouse (+$600/nt)</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="booking-price-breakdown">
-              <div class="price-line">
-                <span>$${stay.pricePerNight} x 3 nights</span>
-                <span>$${stay.pricePerNight * 3}</span>
-              </div>
-              <div class="price-line">
-                <span>Concierge & Hospitality Fee</span>
-                <span>$85</span>
-              </div>
-              <div class="price-line">
-                <span>Taxes & Regional Dues</span>
-                <span>$115</span>
-              </div>
-              <div class="price-line total-line">
-                <span>Total Due Now</span>
-                <span class="grand-total-val">$${(stay.pricePerNight * 3 + 200).toLocaleString()} USD</span>
-              </div>
-            </div>
-
-            <div class="booking-submit-actions">
-              <button type="submit" class="btn btn-primary btn-block btn-lg">
-                Confirm & Reserve Experience
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    `;
-
-    const form = this.bookingModalBody.querySelector('#booking-form');
-    if (form) {
-      form.addEventListener('submit', (e) => {
-        e.preventDefault();
-        this.bookingModal.classList.add('hidden');
-        // Booking is not a real reservation, so the useful outcome is putting
-        // the stay on the plan — which still needs a day and a check-in time.
-        this.openScheduleDialog({ kind: 'stay', item: stay, destination: dest });
-      });
-    }
+    this.openScheduleDialog({ kind: 'stay', item: stay, destination: dest });
   }
 
   showToast(message, type = 'info') {
