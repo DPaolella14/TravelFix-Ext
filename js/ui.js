@@ -310,6 +310,15 @@ export class TravelFixUI {
     }
   }
 
+  closeSidePanel() {
+    this.isPanelCollapsed = true;
+    this.mainWorkspace.classList.add('panel-collapsed');
+    this.navTabSplit.classList.remove('active');
+    if (window.travelFixApp && window.travelFixApp.regionalMap) {
+      window.travelFixApp.regionalMap.invalidateSize();
+    }
+  }
+
   togglePanelCollapse() {
     this.isPanelCollapsed = !this.isPanelCollapsed;
     this.mainWorkspace.classList.toggle('panel-collapsed', this.isPanelCollapsed);
@@ -510,19 +519,19 @@ export class TravelFixUI {
           Popular Coastal & Island Destinations
         </h4>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-          <div class="ocean-quick-pick" data-dest="hawaii" style="cursor: pointer; background: rgba(11, 17, 30, 0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; transition: all 0.2s;">
+          <div class="ocean-quick-pick" data-dest="hawaii" data-label="Hawaii" style="cursor: pointer; background: rgba(11, 17, 30, 0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; transition: all 0.2s;">
             <div style="font-weight: 600; color: #fff; font-size: 13px;">🌺 Hawaii</div>
             <div style="font-size: 11px; color: #00f2fe;">United States</div>
           </div>
-          <div class="ocean-quick-pick" data-dest="bali" style="cursor: pointer; background: rgba(11, 17, 30, 0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; transition: all 0.2s;">
+          <div class="ocean-quick-pick" data-dest="bali" data-label="Bali" style="cursor: pointer; background: rgba(11, 17, 30, 0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; transition: all 0.2s;">
             <div style="font-weight: 600; color: #fff; font-size: 13px;">🌴 Bali</div>
             <div style="font-size: 11px; color: #00f2fe;">Indonesia</div>
           </div>
-          <div class="ocean-quick-pick" data-dest="santorini" style="cursor: pointer; background: rgba(11, 17, 30, 0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; transition: all 0.2s;">
+          <div class="ocean-quick-pick" data-dest="santorini" data-label="Santorini" style="cursor: pointer; background: rgba(11, 17, 30, 0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; transition: all 0.2s;">
             <div style="font-weight: 600; color: #fff; font-size: 13px;">🏛️ Santorini</div>
             <div style="font-size: 11px; color: #00f2fe;">Greece</div>
           </div>
-          <div class="ocean-quick-pick" data-dest="cape-town" style="cursor: pointer; background: rgba(11, 17, 30, 0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; transition: all 0.2s;">
+          <div class="ocean-quick-pick" data-dest="cape-town" data-label="Cape Town" style="cursor: pointer; background: rgba(11, 17, 30, 0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; transition: all 0.2s;">
             <div style="font-weight: 600; color: #fff; font-size: 13px;">🌊 Cape Town</div>
             <div style="font-size: 11px; color: #00f2fe;">South Africa</div>
           </div>
@@ -552,13 +561,35 @@ export class TravelFixUI {
     // Quick pick clicks
     this.dockedExplorerBody.querySelectorAll('.ocean-quick-pick').forEach(el => {
       el.addEventListener('click', () => {
-        const destId = el.dataset.dest;
-        const found = DESTINATIONS.find(d => d.id.toLowerCase() === destId || d.name.toLowerCase().includes(destId));
-        if (found && this.onSelectDestination) {
-          this.onSelectDestination(found);
-        }
+        this.selectQuickPick(el.dataset.dest, el.dataset.label || el.dataset.dest);
       });
     });
+  }
+
+  /**
+   * Open a quick-pick destination. Catalogued destinations open directly;
+   * anything not in the catalogue (Santorini, Cape Town) falls through to the
+   * search box, which resolves it the same way a map click would.
+   */
+  selectQuickPick(destId, label) {
+    if (!destId) return;
+    const key = destId.toLowerCase();
+    const catalogue = this.destinations || [];
+    const found = catalogue.find(d =>
+      d.id.toLowerCase() === key || d.name.toLowerCase().includes(key)
+    );
+
+    if (found) {
+      if (this.onSelectDestination) this.onSelectDestination(found);
+      return;
+    }
+
+    const term = (label || destId).replace(/-/g, ' ');
+    if (this.searchInput) {
+      this.searchInput.value = term;
+      this.handleSearch(term);
+      this.searchInput.focus();
+    }
   }
 
   renderExplorer(dest) {
