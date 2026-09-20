@@ -1,0 +1,3 @@
+# Local test scaffolding (not part of the site)
+vendor/
+index.local.html
