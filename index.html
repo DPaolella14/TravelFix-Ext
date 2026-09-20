@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TravelFix — 2D World Map & 3D Earth Travel Booking, Trip Planner & Social Coordination</title>
+  <meta name="description" content="Explore every country, city, and state on an interactive 2D world map or 3D Earth globe, discover luxury living spaces & activities, design custom travel schedules, and coordinate with co-travelers via direct messaging & group chat.">
+
+  <!-- Favicon with custom branded logo -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='46' fill='%230b1329' stroke='%2300f2fe' stroke-width='4'/%3E%3Cellipse cx='50' cy='50' rx='40' ry='16' fill='none' stroke='%2338bdf8' stroke-width='4' transform='rotate(-30 50 50)'/%3E%3Cpath d='M50 26 C42 26 36 32 36 41 C36 50 50 66 50 66 C50 66 64 50 64 41 C64 32 58 26 50 26 Z' fill='%2300f2fe'/%3E%3Ccircle cx='50' cy='40' r='4' fill='%230b1329'/%3E%3C/svg%3E">
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+  <!-- TravelFix Dark Luxury Stylesheet -->
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="app-root">
+
+    <!-- Top Navigation Bar -->
+    <header class="tf-navbar">
+      <!-- Unique Brand Logo -->
+      <div id="navbar-brand-root" class="navbar-brand-slot"></div>
+
+      <!-- Search Bar with Live Autocomplete for every Country, State, City -->
+      <div class="search-container">
+        <div class="search-input-wrapper">
+          <span class="search-icon">⌕</span>
+          <input 
+            type="text" 
+            id="search-input" 
+            class="search-input" 
+            placeholder="Search any country, state, city, hotel, or activity..." 
+            autocomplete="off"
+          />
+        </div>
+        <div id="search-dropdown" class="search-dropdown hidden"></div>
+      </div>
+
+      <!-- Nav Actions (View Modes & Dashboard Controls) -->
+      <div class="navbar-actions">
+        <!-- 2D Map / 3D Globe Mode Switcher -->
+        <div class="nav-view-switcher">
+          <button id="nav-mode-map" class="nav-mode-btn active" title="Switch to Interactive 2D World Map">
+            <span>🗺️</span> 2D Map
+          </button>
+          <button id="nav-mode-globe" class="nav-mode-btn" title="Switch to 3D Earth Globe">
+            <span>🌍</span> 3D Globe
+          </button>
+        </div>
+
+        <!-- Workspace Layout Buttons -->
+        <div class="nav-layout-switcher">
+          <button id="nav-tab-planner" class="nav-workspace-btn" title="Open Travel Plan Schedule">
+            <span>📅</span> Travel Plan <span id="planner-count-badge" class="badge-count">5 Days</span>
+          </button>
+          <button id="nav-tab-chat" class="nav-workspace-btn" title="Open Trip Chat & Direct Messages">
+            <span>💬</span> Trip Chat <span id="chat-unread-badge" class="badge-count chat-badge">2</span>
+          </button>
+          <button id="nav-tab-split" class="nav-workspace-btn active" title="Toggle Side-by-Side Split View">
+            <span>◫</span> Split View
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Area: Split Map & Docked Function Dashboard -->
+    <main id="main-workspace" class="workspace-split">
+      
+      <!-- Left / Center: Map Viewport Area -->
+      <div id="map-workspace" class="map-workspace-pane">
+        
+        <!-- 2D World & Regional Leaflet Map Viewport -->
+        <div id="map-view-wrapper" class="view-wrapper">
+          <div id="regional-map-container"></div>
+        </div>
+
+        <!-- 3D Earth Globe Viewport -->
+        <div id="globe-view-wrapper" class="view-wrapper hidden-view">
+          <div id="globe-canvas-container"></div>
+        </div>
+
+        <!-- Floating HUD Controls for Map & Camera -->
+        <div class="hud-overlay">
+          <!-- 2D Map Layer Switcher -->
+          <div id="hud-map-layers" class="hud-panel">
+            <button id="hud-layer-dark" class="hud-btn active" title="Dark Cartography (No Watermarks)">
+              <span>🌑</span> Dark
+            </button>
+            <button id="hud-layer-satellite" class="hud-btn" title="High-Res Satellite Imagery">
+              <span>🛰️</span> Satellite
+            </button>
+            <button id="hud-layer-streets" class="hud-btn" title="Street & Topo Navigation">
+              <span>🧭</span> Streets
+            </button>
+          </div>
+
+          <!-- 3D Globe Tools -->
+          <div id="hud-globe-tools" class="hud-panel" style="display: none;">
+            <button id="hud-toggle-rotate" class="hud-btn active" title="Toggle Auto-Rotation">
+              <span>⟳</span> Auto Orbit
+            </button>
+            <button id="hud-toggle-hotspots" class="hud-btn active" title="Toggle Popular Travel Hotspots">
+              <span>📍</span> <span class="hotspot-label">Hotspots: On</span>
+            </button>
+          </div>
+
+          <!-- Common Navigation & Zoom Controls -->
+          <div class="hud-panel">
+            <button id="hud-zoom-in" class="hud-btn" title="Zoom In">
+              <span>+</span> Zoom In
+            </button>
+            <button id="hud-zoom-out" class="hud-btn" title="Zoom Out">
+              <span>&minus;</span> Zoom Out
+            </button>
+            <button id="hud-reset-cam" class="hud-btn" title="Reset Camera View">
+              <span>◎</span> Reset
+            </button>
+          </div>
+
+          <!-- Live Coordinates & Mode Badge -->
+          <div id="hud-altitude-indicator" class="hud-altitude-pill">
+            <span class="alt-dot dot-orbit"></span>
+            <span class="alt-text"><b>2D World Explorer</b> &bull; Click anywhere on Earth</span>
+          </div>
+        </div>
+
+        <!-- Floating Pin Hover Tooltip -->
+        <div id="globe-pin-tooltip" class="globe-pin-tooltip" style="display: none;"></div>
+      </div>
+
+      <!-- Right: Docked Dashboard Panel (Planner, Chat & Explorer side-by-side with Map) -->
+      <aside id="side-dashboard-panel" class="side-dashboard-pane">
+        
+        <!-- Panel Navigation Header -->
+        <div class="panel-header-tabs">
+          <div class="panel-tabs-group">
+            <button class="panel-tab-btn active" data-panel-tab="planner" id="tab-btn-planner">
+              <span>📅</span> Travel Plan
+            </button>
+            <button class="panel-tab-btn" data-panel-tab="chat" id="tab-btn-chat">
+              <span>💬</span> Trip Chat
+            </button>
+            <button class="panel-tab-btn" data-panel-tab="explorer" id="tab-btn-explorer">
+              <span>🧭</span> Destination Explorer
+            </button>
+          </div>
+          <div class="panel-window-actions">
+            <button id="btn-toggle-panel-expand" class="btn-panel-ctrl" title="Expand / Pop Out View">⤢</button>
+            <button id="btn-toggle-panel-collapse" class="btn-panel-ctrl" title="Collapse Panel">✕</button>
+          </div>
+        </div>
+
+        <!-- Tab 1: Travel Plan & Multi-Day Itinerary -->
+        <section id="panel-content-planner" class="panel-content-view active">
+          <div id="docked-planner-body" class="panel-scroll-body"></div>
+        </section>
+
+        <!-- Tab 2: Trip Crew Social Chat & Direct Messaging -->
+        <section id="panel-content-chat" class="panel-content-view">
+          <div class="docked-chat-layout">
+            <!-- Channel & Member Selector Subheader -->
+            <div class="docked-chat-subnav">
+              <div class="docked-chat-channels">
+                <button class="chat-subnav-btn active" data-channel="group">
+                  <span>🌟</span> Group Crew
+                </button>
+                <div id="docked-dm-subnav" class="docked-dm-chips"></div>
+              </div>
+              <button id="btn-docked-invite" class="btn-chat-invite-mini" title="Invite user by @username">
+                <span>➕</span> Invite @user
+              </button>
+            </div>
+
+            <!-- Messages Stream -->
+            <div id="docked-chat-messages" class="docked-chat-stream"></div>
+
+            <!-- Composer -->
+            <div class="docked-chat-composer">
+              <div class="docked-quick-actions">
+                <button id="btn-docked-share-day" class="btn-quick-chip">
+                  <span>🗓️</span> Share Day
+                </button>
+                <button id="btn-docked-share-plan" class="btn-quick-chip">
+                  <span>🗺️</span> Share Full Plan
+                </button>
+              </div>
+              <form id="docked-chat-form" class="docked-input-form">
+                <input 
+                  type="text" 
+                  id="docked-chat-input" 
+                  class="chat-input-field" 
+                  placeholder="Message trip crew or coordinate activities..." 
+                  autocomplete="off"
+                />
+                <button type="submit" class="btn-chat-send">
+                  <span>Send</span> ✈️
+                </button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 3: Destination Explorer (Living Spaces & Activities) -->
+        <section id="panel-content-explorer" class="panel-content-view">
+          <div id="docked-explorer-body" class="panel-scroll-body">
+            <div class="explorer-placeholder">
+              <span class="placeholder-icon">📍</span>
+              <h3>Click or Search Any Location</h3>
+              <p>Click anywhere on the 2D map or search a country, state, or city to view available luxury living spaces and curated activities.</p>
+            </div>
+          </div>
+        </section>
+
+      </aside>
+
+    </main>
+
+    <!-- User Invitation Modal (@username) -->
+    <div id="invite-modal" class="tf-modal-overlay hidden" style="z-index: 1000;">
+      <div class="planner-modal-dialog" style="max-width: 520px;">
+        <div class="planner-modal-header">
+          <div class="planner-modal-title">Invite Co-Traveler to Trip</div>
+          <button id="btn-close-invite" class="btn-close-icon" title="Close">&times;</button>
+        </div>
+        <div class="invite-modal-body">
+          <p class="invite-modal-desc">
+            Invite friends, family, or travel companions by their <b>@username</b> to coordinate schedules, vote on activities, and chat in real time.
+          </p>
+          <form id="form-invite-user" class="invite-form">
+            <div class="form-group">
+              <label for="invite-username">Username:</label>
+              <div class="input-prefix-wrapper">
+                <span class="input-prefix">@</span>
+                <input 
+                  type="text" 
+                  id="invite-username" 
+                  placeholder="e.g. sarah_wanderlust" 
+                  required 
+                  autocomplete="off"
+                />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="invite-fullname">Full Name (Optional):</label>
+              <input 
+                type="text" 
+                id="invite-fullname" 
+                placeholder="e.g. Sarah Chen" 
+                autocomplete="off"
+              />
+            </div>
+            <div class="form-group">
+              <label for="invite-role">Trip Permission Role:</label>
+              <select id="invite-role" class="form-select">
+                <option value="Co-Planner">Co-Planner (Can edit days & suggest activities)</option>
+                <option value="Traveler">Traveler (Can view plan & participate in chat)</option>
+                <option value="Local Specialist">Local Guide / Specialist</option>
+              </select>
+            </div>
+            <div class="form-actions-row">
+              <button type="button" id="btn-cancel-invite" class="btn-secondary">Cancel</button>
+              <button type="submit" class="btn-primary">Send Invite & Open Chat 💬</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Living Space Booking Checkout Modal -->
+    <div id="booking-modal" class="tf-modal-overlay hidden" style="z-index: 1000;">
+      <div class="planner-modal-dialog" style="width: 820px; max-height: 90vh;">
+        <div class="planner-modal-header">
+          <div class="planner-modal-title">Direct Booking & Living Space Confirmation</div>
+          <button id="btn-close-booking" class="btn-close-icon" title="Close Booking">&times;</button>
+        </div>
+        <div id="booking-modal-body" style="overflow-y: auto;"></div>
+      </div>
+    </div>
+
+    <!-- Toast Notification Banner -->
+    <div id="travelfix-toast" class="tf-toast"></div>
+
+  </div>
+
+  <!-- Third-party Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- TravelFix Modular Application Script -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
