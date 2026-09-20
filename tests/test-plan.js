@@ -38,11 +38,16 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
     const tokyo = app.ui.destinations.find(d => d.id === 'tokyo');
     const pl = app.planner;
     pl.clearPlan();
-    // Two nights at the same hotel, two activities on different days.
-    pl.setDayStay(0, tokyo.livingSpaces[0].id, null, tokyo);
-    pl.setDayStay(1, tokyo.livingSpaces[0].id, null, tokyo);
-    pl.addActivityToDay(0, tokyo.activities[0].id, null, tokyo);
-    pl.addActivityToDay(1, tokyo.activities[1].id, null, tokyo);
+    // Two nights at the same hotel, two activities on different dates.
+    const d0 = new Date(); d0.setDate(d0.getDate() + 30);
+    const pad = n => String(n).padStart(2, '0');
+    const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const day1 = iso(d0);
+    const d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
+    const day2 = iso(d1);
+    pl.setStayRange(day1, 2, tokyo.livingSpaces[0].id, null, tokyo);
+    pl.addActivityToDay(day1, tokyo.activities[0].id, null, tokyo);
+    pl.addActivityToDay(day2, tokyo.activities[1].id, null, tokyo);
     return {
       actual: pl.calculateBudget(),
       expectedStays: tokyo.livingSpaces[0].pricePerNight * 2,
@@ -56,7 +61,7 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
     `${budget.actual.activitiesCost} vs ${budget.expectedActs}`);
   check('total adds up', budget.actual.total === budget.expectedStays + budget.expectedActs,
     `${budget.actual.total}`);
-  check('two days counted as scheduled', budget.scheduled === 2, String(budget.scheduled));
+  check('two dates counted as scheduled', budget.scheduled === 2, String(budget.scheduled));
 
   console.log('--- a cleared plan costs nothing ---');
   const cleared = await p.evaluate(() => {
@@ -68,7 +73,7 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
     };
   });
   check('cleared plan totals zero', cleared.total === 0, String(cleared.total));
-  check('clearing keeps all 7 days', cleared.days === 7, String(cleared.days));
+  check('clearing removes every date', cleared.days === 0, String(cleared.days));
   check('nothing marked scheduled', cleared.scheduled === 0, String(cleared.scheduled));
 
   check('no page errors', errs(p).length === 0, errs(p).join(' | '));

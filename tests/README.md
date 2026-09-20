@@ -41,8 +41,9 @@ TF_URL=http://localhost:8090/index.html node tests/run-all.js
 |---|---|
 | `test-chat` | Trip Chat send path, live re-render of replies, subscriber isolation |
 | `test-plan` | Catalogue integrity (no duplicate ids) and budget arithmetic |
-| `test-sched` | Empty default plan, day/time picker, moving items between days |
+| `test-sched` | Empty default plan, date/time picker, moving items between dates |
 | `test-stay` | Hotel reservation merged into the scheduling dialog: nights, guests, room tier, live pricing, consecutive-night blocks |
+| `test-calendar` | Real calendar dates: two-year range, past dates refused, month and year navigation, stays spanning month boundaries, chronological ordering |
 | `test-ocean` | Ocean panel quick picks and Close Explorer |
 | `test-xss` | 10 injection vectors: chat (live + persisted), collaborators, geocoder results, generated destinations, stay dialog, plan titles, map pin labels |
 | `test-signin` | Account UI: log in / sign up tabs, password rules, reveal toggle, wrong-password handling, session persistence, HttpOnly cookie, magic link, sign out |

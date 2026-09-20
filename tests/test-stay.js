@@ -18,7 +18,7 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
   const dlg = await p.evaluate(() => ({
     oldModalGone: !document.getElementById('booking-modal'),
     isStayDialog: !!document.querySelector('.stay-dialog'),
-    dayChips: document.querySelectorAll('.day-chip').length,
+    calendar: !!document.querySelector('.tf-calendar'),
     hasNights: !!document.querySelector('.nights-row'),
     hasGuests: !!document.querySelector('#sched-guests'),
     hasRoom: !!document.querySelector('#sched-room'),
@@ -27,7 +27,7 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
   }));
   check('old booking modal removed from the DOM', dlg.oldModalGone);
   check('stay opens the stay-flavoured dialog', dlg.isStayDialog);
-  check('day picker present', dlg.dayChips === 7, String(dlg.dayChips));
+  check('calendar date picker present', dlg.calendar);
   check('nights control present', dlg.hasNights);
   check('guests present', dlg.hasGuests);
   check('room tier present', dlg.hasRoom);
@@ -55,7 +55,8 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
 
   console.log('--- booking writes consecutive nights ---');
   await p.evaluate(() => {
-    document.querySelector('.day-chip[data-day-index="1"]').click();
+    const cells = [...document.querySelectorAll('.cal-day:not([disabled])')];
+    cells[Math.min(3, cells.length - 1)].click();
     document.querySelector('#sched-guests').value = '3';
     document.querySelector('#sched-guests').dispatchEvent(new Event('change'));
     document.querySelector('.btn-sched-confirm').click();
@@ -64,15 +65,17 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
   const booked = await p.evaluate(() => {
     const days = window.travelFixApp.planner.getDays();
     return {
-      occupied: days.map((d, i) => d.stay ? i : null).filter(v => v !== null),
+      occupied: days.filter(d => d.stay).map(d => d.date),
+      consecutive: days.length === 3,
       checkInFlags: days.filter(d => d.stay).map(d => d.stay.isCheckIn),
-      guests: days[1].stay.guests,
-      tier: days[1].stay.roomTierId,
+      guests: days[0].stay.guests,
+      tier: days[0].stay.roomTierId,
       budget: window.travelFixApp.planner.calculateBudget().livingSpacesCost,
       rate: window.travelFixApp.ui.destinations.find(x => x.id === 'tokyo').livingSpaces[0].pricePerNight
     };
   });
-  check('three consecutive days occupied', booked.occupied.join(',') === '1,2,3', booked.occupied.join(','));
+  check('three consecutive dates occupied', booked.occupied.length === 3 && booked.consecutive,
+    booked.occupied.join(','));
   check('only the first day is check-in', booked.checkInFlags.join(',') === 'true,false,false', booked.checkInFlags.join(','));
   check('guests stored', booked.guests === 3, String(booked.guests));
   check('room tier stored', booked.tier === 'sky-villa', booked.tier);
@@ -99,8 +102,8 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
     document.querySelector('.btn-sched-confirm').click();
   });
   await p.waitForTimeout(900);
-  const shortened = await p.evaluate(() => window.travelFixApp.planner.getDays().map((d, i) => d.stay ? i : null).filter(v => v !== null));
-  check('shortening leaves no orphan nights', shortened.join(',') === '1,2', shortened.join(','));
+  const shortened = await p.evaluate(() => window.travelFixApp.planner.getDays().filter(d => d.stay).map(d => d.date));
+  check('shortening leaves no orphan nights', shortened.length === 2, shortened.join(','));
 
   console.log('--- activities are untouched ---');
   await p.evaluate(() => {
@@ -112,10 +115,12 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
     isStayDialog: !!document.querySelector('.stay-dialog'),
     hasNights: !!document.querySelector('.nights-row'),
     hasGuests: !!document.querySelector('#sched-guests'),
+    hasCalendar: !!document.querySelector('.tf-calendar'),
     slots: document.querySelectorAll('.slot-chip').length,
     heading: document.querySelector('.schedule-dialog h3')?.textContent.trim()
   }));
   check('activity dialog is not the stay variant', !act.isStayDialog);
+  check('activity dialog still has a calendar', act.hasCalendar);
   check('no nights control for activities', !act.hasNights);
   check('no guests control for activities', !act.hasGuests);
   check('still 4 presets + custom', act.slots === 5, String(act.slots));

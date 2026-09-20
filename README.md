@@ -17,16 +17,17 @@
 
 3. **Living Spaces & Accommodations**:
    - Handpicked luxury historic lodges, cloud forest eco-casitas, clifftop villas, skyline suites, and ryokans.
-   - Reserve a stay across consecutive nights, choosing check-in day and time, guests and room tier, with the estimate updating as you go.
+   - Reserve a stay across consecutive nights, choosing check-in date and time, guests and room tier, with the estimate updating as you go.
    - Note: this is a planning tool. Nothing is booked with any hotel, and inventory for locations outside the curated catalogue is generated for illustration.
 
 4. **Curated Regional Activities**:
    - Authentic excursions ranging from Incan Trail sunrise treks and high gastronomy tastings to alpine canoe expeditions and Arctic superjeep aurora chases.
    - Duration, time slots, pricing, highlights, and one-click scheduling.
 
-5. **Weekly Travel Plan & Itinerary Engine**:
-   - A plan is always a full week, Monday to Sunday, so every day is available as a target at any time.
-   - Each stay and activity carries its own time slot — presets or exact times — and days read in chronological order.
+5. **Calendar Travel Plan & Itinerary Engine**:
+   - Book on any real date from today to two years out, picked from a month calendar with month and year navigation.
+   - Days exist only where something is scheduled, and always read in date order; a trip can run over a weekend, across a month boundary, or next summer.
+   - Each stay and activity carries its own time slot — presets or exact times.
    - Move or retime anything after the fact; a multi-night stay moves as one reservation.
    - Live budget breakdown (stays + activities + transit), including room-tier surcharges.
 

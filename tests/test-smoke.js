@@ -15,7 +15,7 @@ const { chromium, ctx, page, hideMap, showMap, errs, check, summary, SP } = requ
     return { title: el.querySelector('.docked-title')?.textContent || '', rows: el.querySelectorAll('.timeline-day-card').length, html: el.innerHTML.length };
   });
   check('plan title renders', planner.title.includes('My Travel Plan') && !planner.title.includes('&amp;'), planner.title);
-  check('all seven day cards render', planner.rows === 7, `rows=${planner.rows}`);
+  check('empty plan renders no day cards', planner.rows === 0, `rows=${planner.rows}`);
 
   // explorer with a real destination containing an ampersand
   await p.evaluate(() => {

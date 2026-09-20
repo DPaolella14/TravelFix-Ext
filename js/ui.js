@@ -8,9 +8,11 @@
 import { UniversalSearchEngine, GLOBAL_GEO_INDEX } from './geo-search.js';
 import { esc, safeUrl } from './escape.js';
 import {
-  WEEKDAYS, TIME_SLOT_PRESETS, DEFAULT_CHECK_IN, ROOM_TIERS, GUEST_OPTIONS,
+  TIME_SLOT_PRESETS, DEFAULT_CHECK_IN, ROOM_TIERS, GUEST_OPTIONS, MAX_NIGHTS,
   formatTime, describeSlot, normaliseSlot
 } from './planner.js';
+import { TravelFixCalendar } from './calendar.js';
+import { addDays, formatMedium, isBookable, todayISO } from './dates.js';
 
 export class TravelFixUI {
   constructor(options) {
@@ -859,30 +861,31 @@ export class TravelFixUI {
    * One dialog for every scheduling decision: adding a stay or activity, and
    * moving or retiming one that is already on the plan.
    *
-   * For a stay this is also the reservation form — nights, guests and room
-   * tier live here rather than in a separate booking modal, because a
-   * check-in date chosen in one dialog and a day chosen in the next was two
-   * places to say the same thing.
+   * The date comes from a real calendar covering today through two years out,
+   * so a trip is not confined to one week. For a stay this is also the
+   * reservation form — nights, guests and room tier live here rather than in
+   * a separate booking modal.
    *
-   * kind          'stay' | 'activity'
-   * item          the living space or activity object
-   * destination   where it belongs (may be null when rescheduling)
-   * fromDayIndex  set when the item is already scheduled (enables move/remove)
+   * kind        'stay' | 'activity'
+   * item        the living space or activity object
+   * destination where it belongs (may be null when rescheduling)
+   * fromDate    set when the item is already scheduled (enables move/remove)
    */
-  openScheduleDialog({ kind, item, destination = null, fromDayIndex = null }) {
+  openScheduleDialog({ kind, item, destination = null, fromDate = null }) {
     const isStay = kind === 'stay';
-    const isReschedule = fromDayIndex !== null;
-    const days = this.planner.getDays();
+    const isReschedule = fromDate !== null;
     const title = isStay ? item.name : item.title;
 
-    // Existing booking details, when editing one.
-    const block = (isStay && isReschedule) ? this.planner.getStayBlock(fromDayIndex) : null;
+    const block = (isStay && isReschedule) ? this.planner.getStayBlock(fromDate) : null;
 
-    let selectedDay = isReschedule
-      ? (block ? block.startIndex : fromDayIndex)
-      : days.findIndex(d => destination && d.destinationId === destination.id);
-    if (selectedDay < 0) selectedDay = days.findIndex(d => !d.stay && !(d.activities || []).length);
-    if (selectedDay < 0) selectedDay = 0;
+    // Where the calendar opens: the existing booking, else the first date
+    // already used for this destination, else today.
+    let selectedDate = isReschedule ? (block ? block.startDate : fromDate) : null;
+    if (!selectedDate && destination) {
+      const existing = this.planner.getDays().find(d => d.destinationId === destination.id);
+      if (existing && isBookable(existing.date)) selectedDate = existing.date;
+    }
+    if (!selectedDate || !isBookable(selectedDate)) selectedDate = todayISO();
 
     let nights = block ? block.nights : 1;
     let guests = block ? block.guests : 2;
@@ -892,8 +895,8 @@ export class TravelFixUI {
     if (isReschedule) {
       if (isStay) currentSlot = block ? block.slot : null;
       else {
-        const day = days[fromDayIndex];
-        currentSlot = ((day.activities || []).find(a => a.activityId === item.id) || {}).slot;
+        const day = this.planner.getDay(fromDate);
+        currentSlot = day ? (day.activities.find(a => a.activityId === item.id) || {}).slot : null;
       }
     }
     if (!currentSlot && !isStay) {
@@ -903,18 +906,6 @@ export class TravelFixUI {
     if (!currentSlot) currentSlot = isStay ? { ...DEFAULT_CHECK_IN } : { ...TIME_SLOT_PRESETS[0] };
     let selectedSlot = normaliseSlot(currentSlot);
 
-    const maxNights = () => WEEKDAYS.length - selectedDay;
-
-    const renderDayChips = () => days.map((d, idx) => {
-      const busy = (d.activities || []).length + (d.stay ? 1 : 0);
-      return `
-        <button type="button" class="day-chip ${idx === selectedDay ? 'active' : ''}" data-day-index="${idx}">
-          <span class="day-chip-name">${esc(d.dayName.slice(0, 3))}</span>
-          <span class="day-chip-date">${esc(this.planner.getDayDate(idx))}</span>
-          ${busy ? `<span class="day-chip-count">${busy}</span>` : ''}
-        </button>`;
-    }).join('');
-
     const presetChips = TIME_SLOT_PRESETS.map(sl => `
       <button type="button" class="slot-chip ${selectedSlot.id === sl.id ? 'active' : ''}" data-slot-id="${esc(sl.id)}">
         <span class="slot-chip-name">${esc(sl.label)}</span>
@@ -923,12 +914,11 @@ export class TravelFixUI {
 
     const isCustom = !TIME_SLOT_PRESETS.some(sl => sl.id === selectedSlot.id) && !isStay;
 
-    // ---- stay-only reservation block -------------------------------------
     const stayFieldsHtml = !isStay ? '' : `
       <div class="schedule-section">
         <label class="schedule-label">How many nights?</label>
         <div class="nights-row">
-          <button type="button" class="nights-step" data-step="-1" aria-label="Fewer nights">−</button>
+          <button type="button" class="nights-step" data-step="-1" aria-label="Fewer nights">&minus;</button>
           <span class="nights-value"><b class="nights-count">${nights}</b> <span class="nights-word">night${nights === 1 ? '' : 's'}</span></span>
           <button type="button" class="nights-step" data-step="1" aria-label="More nights">+</button>
           <span class="nights-range"></span>
@@ -971,7 +961,7 @@ export class TravelFixUI {
               <div class="stay-head-info">
                 <b>${esc(item.name)}</b>
                 <span class="stay-head-type">${esc(item.type || '')}</span>
-                <span class="stay-head-meta">⭐ ${esc(item.rating || '')} · $${item.pricePerNight}/night${destination ? ` · ${esc(destination.name)}` : ''}</span>
+                <span class="stay-head-meta">&#11088; ${esc(item.rating || '')} &middot; $${item.pricePerNight}/night${destination ? ` &middot; ${esc(destination.name)}` : ''}</span>
               </div>
             </div>
           ` : `
@@ -983,8 +973,8 @@ export class TravelFixUI {
           `}
 
           <div class="schedule-section">
-            <label class="schedule-label">${isStay ? 'Check-in day' : 'Which day?'}</label>
-            <div class="day-chip-row">${renderDayChips()}</div>
+            <label class="schedule-label">${isStay ? 'Check-in date' : 'Which date?'}</label>
+            <div class="calendar-host"></div>
           </div>
 
           ${stayFieldsHtml}
@@ -1033,13 +1023,22 @@ export class TravelFixUI {
     const endInput = container.querySelector('.sched-end');
     const close = () => container.remove();
 
-    // ---- live stay summary ------------------------------------------------
     const guestsSelect = container.querySelector('#sched-guests');
     const roomSelect = container.querySelector('#sched-room');
 
+    const calendar = new TravelFixCalendar({
+      host: container.querySelector('.calendar-host'),
+      selected: selectedDate,
+      marked: this.planner.bookedDates(),
+      onSelect: (date) => {
+        selectedDate = date;
+        updateStaySummary();
+      }
+    });
+
     const updateStaySummary = () => {
       if (!isStay) return;
-      nights = Math.max(1, Math.min(nights, maxNights()));
+      nights = Math.max(1, Math.min(nights, MAX_NIGHTS));
       const tier = ROOM_TIERS.find(t => t.id === roomTierId) || ROOM_TIERS[0];
       const base = item.pricePerNight || 0;
       const total = (base + tier.surcharge) * nights;
@@ -1047,12 +1046,9 @@ export class TravelFixUI {
       container.querySelector('.nights-count').textContent = nights;
       container.querySelector('.nights-word').textContent = nights === 1 ? 'night' : 'nights';
 
-      const checkout = selectedDay + nights;
-      const checkoutLabel = checkout < WEEKDAYS.length
-        ? `${WEEKDAYS[checkout]} ${this.planner.getDayDate(checkout)}`
-        : 'after Sunday';
-      container.querySelector('.nights-range').textContent =
-        `${WEEKDAYS[selectedDay]} → check out ${checkoutLabel}`;
+      const checkout = addDays(selectedDate, nights);
+      container.querySelector('.nights-range').textContent = `Check out ${formatMedium(checkout)}`;
+      calendar.setRangeEnd(checkout);
 
       const lines = container.querySelectorAll('.stay-price-breakdown .price-line');
       lines[0].querySelector('.pl-label').textContent = `$${base.toLocaleString()} × ${nights} night${nights === 1 ? '' : 's'}`;
@@ -1068,18 +1064,9 @@ export class TravelFixUI {
 
       container.querySelectorAll('.nights-step').forEach(btn => {
         const step = parseInt(btn.dataset.step, 10);
-        btn.disabled = (step < 0 && nights <= 1) || (step > 0 && nights >= maxNights());
+        btn.disabled = (step < 0 && nights <= 1) || (step > 0 && nights >= MAX_NIGHTS);
       });
     };
-
-    container.querySelectorAll('.day-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        container.querySelectorAll('.day-chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        selectedDay = parseInt(chip.dataset.dayIndex, 10);
-        updateStaySummary();
-      });
-    });
 
     container.querySelectorAll('.nights-step').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -1137,8 +1124,8 @@ export class TravelFixUI {
     const removeBtn = container.querySelector('.btn-sched-remove');
     if (removeBtn) {
       removeBtn.addEventListener('click', () => {
-        if (isStay) this.planner.removeStayBlock(fromDayIndex);
-        else this.planner.removeActivityFromDay(fromDayIndex, item.id);
+        if (isStay) this.planner.removeStayBlock(fromDate);
+        else this.planner.removeActivityFromDay(fromDate, item.id);
         close();
         this.renderPlanner();
         this.showToast(`Removed ${title} from your plan`, 'info');
@@ -1146,24 +1133,22 @@ export class TravelFixUI {
     }
 
     container.querySelector('.btn-sched-confirm').addEventListener('click', () => {
-      const dayName = this.planner.getDay(selectedDay).dayName;
-
       if (isStay) {
-        // Editing an existing reservation clears the old block first, so
-        // shortening a stay does not leave orphan nights behind.
-        if (isReschedule) this.planner.removeStayBlock(fromDayIndex);
-        this.planner.setStayRange(selectedDay, nights, item.id, selectedSlot, destination, { guests, roomTierId });
+        // Editing clears the old block first, so shortening a stay does not
+        // leave orphan nights behind.
+        if (isReschedule) this.planner.removeStayBlock(fromDate);
+        this.planner.setStayRange(selectedDate, nights, item.id, selectedSlot, destination, { guests, roomTierId });
       } else {
-        if (isReschedule) this.planner.moveActivity(fromDayIndex, item.id, selectedDay, selectedSlot);
-        else this.planner.addActivityToDay(selectedDay, item.id, selectedSlot, destination);
+        if (isReschedule) this.planner.moveActivity(fromDate, item.id, selectedDate, selectedSlot);
+        else this.planner.addActivityToDay(selectedDate, item.id, selectedSlot, destination);
       }
 
       close();
       this.renderPlanner();
       this.showToast(
         isStay
-          ? `${title} — ${nights} night${nights === 1 ? '' : 's'} from ${dayName}`
-          : `${isReschedule ? 'Moved' : 'Added'} ${title} — ${dayName}, ${describeSlot(selectedSlot)}`,
+          ? `${title} — ${nights} night${nights === 1 ? '' : 's'} from ${formatMedium(selectedDate)}`
+          : `${isReschedule ? 'Moved' : 'Added'} ${title} — ${formatMedium(selectedDate)}, ${describeSlot(selectedSlot)}`,
         'success'
       );
     });
@@ -1176,18 +1161,14 @@ export class TravelFixUI {
   }
 
   /**
-   * "Add as a stop" from the explorer: pick which day this destination
-   * belongs to, without committing to a specific hotel or activity yet.
+   * "Add as a stop" from the explorer: pick a date for this destination
+   * without committing to a specific hotel or activity yet.
    */
   promptPickDayForDestination(dest) {
     if (!dest) return;
-    const container = document.createElement('div');
-    const chips = this.planner.getDays().map((d, idx) => `
-      <button type="button" class="day-chip" data-day-index="${idx}">
-        <span class="day-chip-name">${esc(d.dayName.slice(0, 3))}</span>
-        <span class="day-chip-date">${esc(this.planner.getDayDate(idx))}</span>
-      </button>`).join('');
+    let chosen = todayISO();
 
+    const container = document.createElement('div');
     container.innerHTML = `
       <div class="quick-modal-overlay tf-schedule-overlay">
         <div class="quick-modal-content schedule-dialog">
@@ -1195,29 +1176,34 @@ export class TravelFixUI {
           <p class="schedule-subject"><b>${esc(dest.name)}</b>
             <span class="schedule-dest">${esc(dest.country || '')}</span></p>
           <div class="schedule-section">
-            <label class="schedule-label">Which day are you here?</label>
-            <div class="day-chip-row">${chips}</div>
+            <label class="schedule-label">Which date are you here?</label>
+            <div class="calendar-host"></div>
           </div>
           <div class="quick-modal-buttons">
             <button type="button" class="btn btn-secondary btn-sched-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary btn-sched-confirm">Add stop</button>
           </div>
         </div>
       </div>`;
     document.body.appendChild(container);
 
     const close = () => container.remove();
+    new TravelFixCalendar({
+      host: container.querySelector('.calendar-host'),
+      selected: chosen,
+      marked: this.planner.bookedDates(),
+      onSelect: (date) => { chosen = date; }
+    });
+
     container.querySelector('.btn-sched-cancel').addEventListener('click', close);
     container.querySelector('.tf-schedule-overlay').addEventListener('click', (e) => {
       if (e.target.classList.contains('tf-schedule-overlay')) close();
     });
-    container.querySelectorAll('.day-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const idx = parseInt(chip.dataset.dayIndex, 10);
-        this.planner.setDayDestination(idx, dest);
-        close();
-        this.renderPlanner();
-        this.showToast(`${dest.name} set as ${this.planner.getDay(idx).dayName}'s stop`, 'success');
-      });
+    container.querySelector('.btn-sched-confirm').addEventListener('click', () => {
+      this.planner.setDayDestination(chosen, dest);
+      close();
+      this.renderPlanner();
+      this.showToast(`${dest.name} added on ${formatMedium(chosen)}`, 'success');
     });
   }
 
@@ -1232,10 +1218,9 @@ export class TravelFixUI {
   renderPlannerBadge() {
     const badge = document.getElementById('planner-count-badge');
     if (!badge) return;
-    // The week is always seven days, so the useful number is how many of
-    // them actually have something on them.
+    // Days are real dates now, so a denominator would be meaningless.
     const planned = this.planner.getScheduledDays().length;
-    badge.textContent = planned ? `${planned}/7 Days` : 'Empty';
+    badge.textContent = planned ? `${planned} Day${planned === 1 ? '' : 's'}` : 'Empty';
   }
 
   renderPlanner() {
@@ -1247,6 +1232,12 @@ export class TravelFixUI {
     const allPlans = this.planner.getAllPlans();
     const activePlan = this.planner.plan;
     const scheduledCount = itinerary.filter(d => !d.isEmpty).length;
+    const rawRange = this.planner.getTripRange();
+    const tripRange = rawRange ? {
+      ...rawRange,
+      startLabel: formatMedium(rawRange.start),
+      endLabel: formatMedium(rawRange.end),
+    } : null;
 
     this.dockedPlannerBody.innerHTML = `
       <!-- Header Summary Banner -->
@@ -1293,12 +1284,14 @@ export class TravelFixUI {
         </div>
       </div>
 
-      <!-- Week start date -->
-      <div class="planner-week-row">
-        <label class="t-lbl" for="input-plan-start">Week starting</label>
-        <input type="date" id="input-plan-start" class="plan-date-input" value="${esc(activePlan.startDate || '')}">
-        <span class="planner-week-hint">${scheduledCount} of 7 days planned</span>
-      </div>
+      <!-- Trip dates: derived from what is scheduled, not a fixed week -->
+      ${tripRange ? `
+        <div class="planner-week-row">
+          <span class="t-lbl">Trip dates</span>
+          <span class="trip-range">${esc(tripRange.startLabel)} &rarr; ${esc(tripRange.endLabel)}</span>
+          <span class="planner-week-hint">${tripRange.days} day${tripRange.days === 1 ? '' : 's'} &middot; ${scheduledCount} scheduled</span>
+        </div>
+      ` : ''}
 
       <!-- Action Buttons -->
       <div class="planner-docked-actions">
@@ -1307,7 +1300,7 @@ export class TravelFixUI {
         <button class="btn btn-secondary btn-sm" id="btn-docked-print">\u{1F5A8}\u{FE0F} Print</button>
       </div>
 
-      <!-- Timeline Days List: always the full week -->
+      <!-- Timeline: the dates that actually hold something, in order -->
       <div class="docked-timeline-list">
         ${itinerary.map(item => this.renderItineraryDayCard(item)).join('')}
       </div>
@@ -1316,7 +1309,7 @@ export class TravelFixUI {
         <div class="empty-timeline-card">
           <div style="font-size: 30px; margin-bottom: 6px;">\u{1F5FA}\u{FE0F}</div>
           <h4>Nothing scheduled yet</h4>
-          <p>Search a destination or click anywhere on the map, then add a stay or an activity. You will be asked which day and what time.</p>
+          <p>Search a destination or click anywhere on the map, then add a stay or an activity. You'll pick the date from a calendar &mdash; anything from today to two years out.</p>
         </div>
       ` : ''}
     `;
@@ -1372,16 +1365,6 @@ export class TravelFixUI {
       });
     }
 
-    // Week start date
-    const inputStart = this.dockedPlannerBody.querySelector('#input-plan-start');
-    if (inputStart) {
-      inputStart.addEventListener('change', (e) => {
-        if (this.planner.setStartDate(e.target.value)) {
-          this.renderPlanner();
-        }
-      });
-    }
-
     // Invite
     const btnInvite = this.dockedPlannerBody.querySelector('#btn-docked-invite-top');
     if (btnInvite) {
@@ -1410,11 +1393,10 @@ export class TravelFixUI {
     this.dockedPlannerBody.querySelectorAll('.btn-clear-day').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const idx = parseInt(btn.getAttribute('data-index'), 10);
-        const dayName = this.planner.getDay(idx).dayName;
-        this.planner.clearDay(idx);
+        const date = btn.getAttribute('data-date');
+        this.planner.clearDay(date);
         this.renderPlanner();
-        this.showToast(`Cleared ${dayName}.`, 'info');
+        this.showToast(`Cleared ${formatMedium(date)}.`, 'info');
       });
     });
 
@@ -1422,23 +1404,23 @@ export class TravelFixUI {
     this.dockedPlannerBody.querySelectorAll('.btn-reschedule').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const dayIdx = parseInt(btn.getAttribute('data-day-idx'), 10);
+        const date = btn.getAttribute('data-date');
         const kind = btn.getAttribute('data-kind');
-        const day = this.planner.getDay(dayIdx);
+        const day = this.planner.getDay(date);
         if (!day) return;
 
         if (kind === 'stay') {
           const found = this.planner.findLivingSpace(day.stay && day.stay.livingSpaceId);
           if (found) {
             this.openScheduleDialog({
-              kind: 'stay', item: found.stay, destination: found.destination, fromDayIndex: dayIdx
+              kind: 'stay', item: found.stay, destination: found.destination, fromDate: date
             });
           }
         } else {
           const found = this.planner.findActivity(btn.getAttribute('data-act-id'));
           if (found) {
             this.openScheduleDialog({
-              kind: 'activity', item: found.activity, destination: found.destination, fromDayIndex: dayIdx
+              kind: 'activity', item: found.activity, destination: found.destination, fromDate: date
             });
           }
         }
@@ -1457,12 +1439,12 @@ export class TravelFixUI {
 
     this.dockedPlannerBody.querySelectorAll('.btn-share-day-chat').forEach(btn => {
       btn.addEventListener('click', () => {
-        const idx = parseInt(btn.getAttribute('data-day-idx'), 10);
-        const day = itinerary[idx];
+        const date = btn.getAttribute('data-date');
+        const day = itinerary.find(d => d.date === date);
         if (day && this.chat) {
           this.switchPanelTab('chat');
           this.chat.shareItineraryCard({
-            dayName: day.dayName,
+            dayName: `${day.dayName}, ${day.dateLabel}`,
             destinationName: day.destination ? day.destination.name : 'Transit',
             destinationId: day.destination ? day.destination.id : null,
             livingSpaceName: day.livingSpace ? day.livingSpace.name : 'No hotel selected',
@@ -1470,16 +1452,16 @@ export class TravelFixUI {
             notes: day.notes
           }, 'day');
           this.renderChat();
-          this.showToast(`Shared ${day.dayName} schedule with trip crew!`, 'success');
+          this.showToast(`Shared ${day.dateLabel} into Trip Notes`, 'success');
         }
       });
     });
 
     this.dockedPlannerBody.querySelectorAll('.btn-remove-act-from-day').forEach(btn => {
       btn.addEventListener('click', () => {
-        const dayIdx = parseInt(btn.getAttribute('data-day-idx'), 10);
+        const date = btn.getAttribute('data-date');
         const actId = btn.getAttribute('data-act-id');
-        this.planner.removeActivityFromDay(dayIdx, actId);
+        this.planner.removeActivityFromDay(date, actId);
         this.renderPlanner();
       });
     });
@@ -1493,9 +1475,9 @@ export class TravelFixUI {
       <div class="timeline-day-card ${item.isEmpty ? 'day-empty' : ''}">
         <div class="day-badge-col">
           <div class="day-name-title">${esc(item.dayName)}</div>
-          <div class="day-date-sub">${esc(item.date || '')}</div>
+          <div class="day-date-sub">${esc(item.dateLabel)}</div>
           ${dest ? `<button class="btn-flyto-dest" data-dest-id="${esc(dest.id)}" title="Focus on map">\u{1F5FA}\u{FE0F} Explore</button>` : ''}
-          ${!item.isEmpty ? `<button class="btn-share-day-chat" data-day-idx="${item.index}" title="Share this day in chat">\u{1F4AC} Share</button>` : ''}
+          ${!item.isEmpty ? `<button class="btn-share-day-chat" data-date="${esc(item.date)}" title="Share this day in chat">\u{1F4AC} Share</button>` : ''}
         </div>
 
         <div class="day-content-col">
@@ -1504,7 +1486,7 @@ export class TravelFixUI {
               <h4 class="day-dest-title">${esc(destName)} ${dest ? `<span class="dest-flag">${esc(dest.country)}</span>` : ''}</h4>
               <div class="day-notes">${esc(item.notes || '')}</div>
             </div>
-            ${!item.isEmpty ? `<button class="btn-clear-day" data-index="${item.index}" title="Clear this day">\u2715</button>` : ''}
+            ${!item.isEmpty ? `<button class="btn-clear-day" data-date="${esc(item.date)}" title="Clear this day">\u2715</button>` : ''}
           </div>
 
           ${item.transit ? `
@@ -1536,7 +1518,7 @@ export class TravelFixUI {
             ${item.livingSpace ? `
               <div class="item-actions-col">
                 <div class="item-cost">$${(item.stayBooking ? item.stayBooking.nightlyRate : item.livingSpace.pricePerNight).toLocaleString()} <small>/ nt</small></div>
-                <button class="btn-reschedule" data-kind="stay" data-day-idx="${item.index}" title="Edit this reservation">Edit</button>
+                <button class="btn-reschedule" data-kind="stay" data-date="${esc(item.date)}" title="Edit this reservation">Edit</button>
               </div>
             ` : ''}
           </div>
@@ -1556,8 +1538,8 @@ export class TravelFixUI {
                       </div>
                       <div class="act-sub-right">
                         <span class="act-price-badge">$${act.price}</span>
-                        <button class="btn-reschedule" data-kind="activity" data-day-idx="${item.index}" data-act-id="${esc(act.id)}" title="Change day or time">Move</button>
-                        <button class="btn-remove-act-from-day" data-day-idx="${item.index}" data-act-id="${esc(act.id)}" title="Remove activity">\u2715</button>
+                        <button class="btn-reschedule" data-kind="activity" data-date="${esc(item.date)}" data-act-id="${esc(act.id)}" title="Change day or time">Move</button>
+                        <button class="btn-remove-act-from-day" data-date="${esc(item.date)}" data-act-id="${esc(act.id)}" title="Remove activity">\u2715</button>
                       </div>
                     </div>
                   `).join('')}
