@@ -7,6 +7,10 @@
 
 import { UniversalSearchEngine, GLOBAL_GEO_INDEX } from './geo-search.js';
 import { esc, safeUrl } from './escape.js';
+import {
+  WEEKDAYS, TIME_SLOT_PRESETS, DEFAULT_CHECK_IN,
+  formatTime, describeSlot, normaliseSlot
+} from './planner.js';
 
 export class TravelFixUI {
   constructor(options) {
@@ -686,7 +690,7 @@ export class TravelFixUI {
     // Action buttons
     const addStopBtn = this.dockedExplorerBody.querySelector('#btn-docked-add-dest');
     if (addStopBtn) {
-      addStopBtn.addEventListener('click', () => this.promptAddDestinationToDay(dest));
+      addStopBtn.addEventListener('click', () => this.promptPickDayForDestination(dest));
     }
 
     const shareDestBtn = this.dockedExplorerBody.querySelector('#btn-docked-share-dest');
@@ -839,114 +843,247 @@ export class TravelFixUI {
     });
   }
 
-  promptAssignStayToDay(stay, dest) {
+  // ==========================================
+  // SCHEDULING DIALOG (DAY + TIME SLOT)
+  // ==========================================
+
+  /** "05:30 AM - 10:30 AM" -> { start: '05:30', end: '10:30' }, or null. */
+  parseSuggestedSlot(text) {
+    if (!text) return null;
+    const m = String(text).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?\s*[-–—]\s*(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!m) return null;
+    const to24 = (h, min, period) => {
+      let hour = parseInt(h, 10);
+      if (period) {
+        const p = period.toUpperCase();
+        if (p === 'PM' && hour !== 12) hour += 12;
+        if (p === 'AM' && hour === 12) hour = 0;
+      }
+      return `${String(hour).padStart(2, '0')}:${min}`;
+    };
+    return { start: to24(m[1], m[2], m[3]), end: to24(m[4], m[5], m[6]) };
+  }
+
+  /**
+   * One dialog for every scheduling decision: adding a stay or activity, and
+   * moving or retiming one that is already on the plan.
+   *
+   * kind          'stay' | 'activity'
+   * item          the living space or activity object
+   * destination   where it belongs (may be null when rescheduling)
+   * fromDayIndex  set when the item is already scheduled (enables move/remove)
+   */
+  openScheduleDialog({ kind, item, destination = null, fromDayIndex = null }) {
+    const isReschedule = fromDayIndex !== null;
     const days = this.planner.getDays();
-    if (!days.length) {
-      this.promptAddDestinationToDay(dest);
-      return;
+    const title = kind === 'stay' ? item.name : item.title;
+    const price = kind === 'stay' ? `$${item.pricePerNight}/night` : `$${item.price}`;
+
+    // Preselect: the day it is already on, else the first day at this
+    // destination, else the first day with nothing scheduled, else Monday.
+    let selectedDay = isReschedule ? fromDayIndex : days.findIndex(d => destination && d.destinationId === destination.id);
+    if (selectedDay < 0) selectedDay = days.findIndex(d => !d.stay && !(d.activities || []).length);
+    if (selectedDay < 0) selectedDay = 0;
+
+    // Preselect a time: whatever it already has, else the activity's own
+    // suggested slot, else a sensible default for the kind.
+    let currentSlot = null;
+    if (isReschedule) {
+      const day = days[fromDayIndex];
+      currentSlot = kind === 'stay'
+        ? (day.stay && day.stay.slot)
+        : ((day.activities || []).find(a => a.activityId === item.id) || {}).slot;
     }
+    if (!currentSlot && kind === 'activity') {
+      const suggested = this.parseSuggestedSlot(item.timeSlot);
+      if (suggested) currentSlot = { id: 'custom', label: 'Suggested', ...suggested };
+    }
+    if (!currentSlot) currentSlot = kind === 'stay' ? { ...DEFAULT_CHECK_IN } : { ...TIME_SLOT_PRESETS[0] };
 
-    const optionsHtml = days.map((day, idx) => `
-      <div class="plan-day-select-item" data-day-index="${idx}">
-        <div class="select-day-header">
-          <strong>${day.dayName}</strong> - ${day.date || 'Scheduled'}
-        </div>
-        <div class="select-day-dest">Stop: <span>${day.destinationId}</span></div>
-      </div>
-    `).join('');
+    let selectedSlot = normaliseSlot(currentSlot);
 
-    const modalHtml = `
-      <div class="quick-modal-overlay">
-        <div class="quick-modal-content">
-          <h3>Set Living Space for Itinerary Day</h3>
-          <p>Assign <b>${esc(stay.name)}</b> ($${stay.pricePerNight}/night) in ${esc(dest.name)}:</p>
-          <div class="day-picker-list">${optionsHtml}</div>
-          <div class="quick-modal-buttons">
-            <button class="btn btn-secondary btn-cancel-assign">Cancel</button>
-          </div>
-        </div>
-      </div>
-    `;
+    const dayChips = days.map((d, idx) => {
+      const busy = (d.activities || []).length + (d.stay ? 1 : 0);
+      return `
+        <button type="button" class="day-chip ${idx === selectedDay ? 'active' : ''}" data-day-index="${idx}">
+          <span class="day-chip-name">${esc(d.dayName.slice(0, 3))}</span>
+          <span class="day-chip-date">${esc(this.planner.getDayDate(idx))}</span>
+          ${busy ? `<span class="day-chip-count">${busy}</span>` : ''}
+        </button>`;
+    }).join('');
+
+    const presetChips = TIME_SLOT_PRESETS.map(sl => `
+      <button type="button" class="slot-chip ${selectedSlot.id === sl.id ? 'active' : ''}" data-slot-id="${esc(sl.id)}">
+        <span class="slot-chip-name">${esc(sl.label)}</span>
+        <span class="slot-chip-time">${esc(formatTime(sl.start))} – ${esc(formatTime(sl.end))}</span>
+      </button>`).join('');
+
+    const isCustom = !TIME_SLOT_PRESETS.some(sl => sl.id === selectedSlot.id);
 
     const container = document.createElement('div');
-    container.innerHTML = modalHtml;
+    container.innerHTML = `
+      <div class="quick-modal-overlay tf-schedule-overlay">
+        <div class="quick-modal-content schedule-dialog">
+          <h3>${isReschedule ? 'Reschedule' : (kind === 'stay' ? 'Add Living Space to Plan' : 'Add Activity to Plan')}</h3>
+          <p class="schedule-subject">
+            <b>${esc(title)}</b>
+            <span class="schedule-price">${esc(price)}</span>
+            ${destination ? `<span class="schedule-dest">${esc(destination.name)}</span>` : ''}
+          </p>
+
+          <div class="schedule-section">
+            <label class="schedule-label">Which day?</label>
+            <div class="day-chip-row">${dayChips}</div>
+          </div>
+
+          <div class="schedule-section">
+            <label class="schedule-label">${kind === 'stay' ? 'Check-in time' : 'Time slot'}</label>
+            <div class="slot-chip-row">
+              ${presetChips}
+              <button type="button" class="slot-chip slot-chip-custom ${isCustom ? 'active' : ''}" data-slot-id="custom">
+                <span class="slot-chip-name">Custom</span>
+                <span class="slot-chip-time">Set exact times</span>
+              </button>
+            </div>
+            <div class="custom-time-row" ${isCustom ? '' : 'hidden'}>
+              <label>Start <input type="time" class="sched-start" value="${esc(selectedSlot.start)}"></label>
+              <label>End <input type="time" class="sched-end" value="${esc(selectedSlot.end)}"></label>
+            </div>
+          </div>
+
+          <div class="quick-modal-buttons">
+            <button type="button" class="btn btn-secondary btn-sched-cancel">Cancel</button>
+            ${isReschedule ? '<button type="button" class="btn btn-danger btn-sched-remove">Remove from plan</button>' : ''}
+            <button type="button" class="btn btn-primary btn-sched-confirm">
+              ${isReschedule ? 'Save changes' : 'Add to plan'}
+            </button>
+          </div>
+        </div>
+      </div>`;
     document.body.appendChild(container);
 
-    container.querySelectorAll('.plan-day-select-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const idx = parseInt(item.getAttribute('data-day-index'), 10);
-        this.planner.updateDayDestination(idx, dest);
-        this.planner.setDayLivingSpace(idx, stay.id);
-        this.showToast(`Assigned ${stay.name} to ${days[idx].dayName}!`, 'success');
-        container.remove();
-        this.renderPlanner();
+    const customRow = container.querySelector('.custom-time-row');
+    const startInput = container.querySelector('.sched-start');
+    const endInput = container.querySelector('.sched-end');
+    const close = () => container.remove();
+
+    container.querySelectorAll('.day-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        container.querySelectorAll('.day-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        selectedDay = parseInt(chip.dataset.dayIndex, 10);
       });
     });
 
-    container.querySelector('.btn-cancel-assign').addEventListener('click', () => {
-      container.remove();
+    container.querySelectorAll('.slot-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        container.querySelectorAll('.slot-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        const id = chip.dataset.slotId;
+        if (id === 'custom') {
+          customRow.hidden = false;
+          selectedSlot = { id: 'custom', label: 'Custom', start: startInput.value, end: endInput.value };
+        } else {
+          customRow.hidden = true;
+          selectedSlot = { ...TIME_SLOT_PRESETS.find(s => s.id === id) };
+        }
+      });
+    });
+
+    [startInput, endInput].forEach(input => {
+      input.addEventListener('change', () => {
+        selectedSlot = { id: 'custom', label: 'Custom', start: startInput.value, end: endInput.value };
+      });
+    });
+
+    container.querySelector('.btn-sched-cancel').addEventListener('click', close);
+    container.querySelector('.tf-schedule-overlay').addEventListener('click', (e) => {
+      if (e.target.classList.contains('tf-schedule-overlay')) close();
+    });
+
+    const removeBtn = container.querySelector('.btn-sched-remove');
+    if (removeBtn) {
+      removeBtn.addEventListener('click', () => {
+        if (kind === 'stay') this.planner.removeDayStay(fromDayIndex);
+        else this.planner.removeActivityFromDay(fromDayIndex, item.id);
+        close();
+        this.renderPlanner();
+        this.showToast(`Removed ${title} from your plan`, 'info');
+      });
+    }
+
+    container.querySelector('.btn-sched-confirm').addEventListener('click', () => {
+      const dayName = this.planner.getDay(selectedDay).dayName;
+
+      if (kind === 'stay') {
+        if (isReschedule) this.planner.moveStay(fromDayIndex, selectedDay, selectedSlot);
+        else this.planner.setDayStay(selectedDay, item.id, selectedSlot, destination);
+      } else {
+        if (isReschedule) this.planner.moveActivity(fromDayIndex, item.id, selectedDay, selectedSlot);
+        else this.planner.addActivityToDay(selectedDay, item.id, selectedSlot, destination);
+      }
+
+      close();
+      this.renderPlanner();
+      this.showToast(
+        `${isReschedule ? 'Moved' : 'Added'} ${title} — ${dayName}, ${describeSlot(selectedSlot)}`,
+        'success'
+      );
+    });
+  }
+
+  promptAssignStayToDay(stay, dest) {
+    this.openScheduleDialog({ kind: 'stay', item: stay, destination: dest });
+  }
+
+  /**
+   * "Add as a stop" from the explorer: pick which day this destination
+   * belongs to, without committing to a specific hotel or activity yet.
+   */
+  promptPickDayForDestination(dest) {
+    if (!dest) return;
+    const container = document.createElement('div');
+    const chips = this.planner.getDays().map((d, idx) => `
+      <button type="button" class="day-chip" data-day-index="${idx}">
+        <span class="day-chip-name">${esc(d.dayName.slice(0, 3))}</span>
+        <span class="day-chip-date">${esc(this.planner.getDayDate(idx))}</span>
+      </button>`).join('');
+
+    container.innerHTML = `
+      <div class="quick-modal-overlay tf-schedule-overlay">
+        <div class="quick-modal-content schedule-dialog">
+          <h3>Add Stop to Plan</h3>
+          <p class="schedule-subject"><b>${esc(dest.name)}</b>
+            <span class="schedule-dest">${esc(dest.country || '')}</span></p>
+          <div class="schedule-section">
+            <label class="schedule-label">Which day are you here?</label>
+            <div class="day-chip-row">${chips}</div>
+          </div>
+          <div class="quick-modal-buttons">
+            <button type="button" class="btn btn-secondary btn-sched-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(container);
+
+    const close = () => container.remove();
+    container.querySelector('.btn-sched-cancel').addEventListener('click', close);
+    container.querySelector('.tf-schedule-overlay').addEventListener('click', (e) => {
+      if (e.target.classList.contains('tf-schedule-overlay')) close();
+    });
+    container.querySelectorAll('.day-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const idx = parseInt(chip.dataset.dayIndex, 10);
+        this.planner.setDayDestination(idx, dest);
+        close();
+        this.renderPlanner();
+        this.showToast(`${dest.name} set as ${this.planner.getDay(idx).dayName}'s stop`, 'success');
+      });
     });
   }
 
   promptAddActivityToDay(act, dest) {
-    const days = this.planner.getDays();
-    if (!days.length) {
-      this.promptAddDestinationToDay(dest);
-      return;
-    }
-
-    const optionsHtml = days.map((day, idx) => `
-      <div class="plan-day-select-item" data-day-index="${idx}">
-        <div class="select-day-header">
-          <strong>${day.dayName}</strong> (${day.date || 'Scheduled'})
-        </div>
-        <div class="select-day-dest">${day.destinationId === dest.id ? '✓ Matching Destination' : 'Will update stop to ' + esc(dest.name)}</div>
-      </div>
-    `).join('');
-
-    const modalHtml = `
-      <div class="quick-modal-overlay">
-        <div class="quick-modal-content">
-          <h3>Add Activity to Itinerary</h3>
-          <p>Schedule <b>${esc(act.title)}</b> ($${act.price}):</p>
-          <div class="day-picker-list">${optionsHtml}</div>
-          <div class="quick-modal-buttons">
-            <button class="btn btn-secondary btn-cancel-assign">Cancel</button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const container = document.createElement('div');
-    container.innerHTML = modalHtml;
-    document.body.appendChild(container);
-
-    container.querySelectorAll('.plan-day-select-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const idx = parseInt(item.getAttribute('data-day-index'), 10);
-        if (days[idx].destinationId !== dest.id) {
-          this.planner.updateDayDestination(idx, dest);
-        }
-        this.planner.addActivityToDay(idx, act.id);
-        this.showToast(`Added ${act.title} to ${days[idx].dayName}!`, 'success');
-        container.remove();
-        this.renderPlanner();
-      });
-    });
-
-    container.querySelector('.btn-cancel-assign').addEventListener('click', () => {
-      container.remove();
-    });
-  }
-
-  promptAddDestinationToDay(dest) {
-    const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    const daysCount = this.planner.getDays().length;
-    const nextDayName = dayNames[daysCount % 7];
-
-    this.planner.addDay(nextDayName, dest);
-    this.showToast(`Added new stop for ${dest.name} on ${nextDayName}!`, 'success');
-    this.renderPlanner();
+    this.openScheduleDialog({ kind: 'activity', item: act, destination: dest });
   }
 
   // ==========================================
@@ -956,8 +1093,10 @@ export class TravelFixUI {
   renderPlannerBadge() {
     const badge = document.getElementById('planner-count-badge');
     if (!badge) return;
-    const days = this.planner.getDays();
-    badge.textContent = `${days.length} Days`;
+    // The week is always seven days, so the useful number is how many of
+    // them actually have something on them.
+    const planned = this.planner.getScheduledDays().length;
+    badge.textContent = planned ? `${planned}/7 Days` : 'Empty';
   }
 
   renderPlanner() {
@@ -968,6 +1107,7 @@ export class TravelFixUI {
     const budget = this.planner.calculateBudget();
     const allPlans = this.planner.getAllPlans();
     const activePlan = this.planner.plan;
+    const scheduledCount = itinerary.filter(d => !d.isEmpty).length;
 
     this.dockedPlannerBody.innerHTML = `
       <!-- Header Summary Banner -->
@@ -1014,39 +1154,32 @@ export class TravelFixUI {
         </div>
       </div>
 
-      <!-- Quick Showcase Template Switcher -->
-      <div class="planner-docked-templates">
-        <span class="t-lbl">Showcase Templates:</span>
-        <button class="btn-template-chip ${activePlan.id === 'nyc-tokyo' ? 'active' : ''}" id="btn-tpl-nyc-tokyo">
-          🗽 NYC & 🗼 Tokyo
-        </button>
-        <button class="btn-template-chip ${activePlan.id === 'south-america' ? 'active' : ''}" id="btn-tpl-sa">
-          🦙 Machu Picchu & 🇧🇷 São Paulo
-        </button>
+      <!-- Week start date -->
+      <div class="planner-week-row">
+        <label class="t-lbl" for="input-plan-start">Week starting</label>
+        <input type="date" id="input-plan-start" class="plan-date-input" value="${esc(activePlan.startDate || '')}">
+        <span class="planner-week-hint">${scheduledCount} of 7 days planned</span>
       </div>
 
       <!-- Action Buttons -->
       <div class="planner-docked-actions">
-        <button class="btn btn-primary btn-sm" id="btn-docked-add-day">+ Add Day to Plan</button>
-        <button class="btn btn-outline btn-sm" id="btn-docked-invite-top">👥 Invite Collaborators</button>
-        <button class="btn btn-secondary btn-sm" id="btn-docked-clear">✕ Clear All Days</button>
-        <button class="btn btn-secondary btn-sm" id="btn-docked-print">🖨️ Print</button>
+        <button class="btn btn-outline btn-sm" id="btn-docked-invite-top">\u{1F465} Invite Collaborators</button>
+        <button class="btn btn-secondary btn-sm" id="btn-docked-clear">\u2715 Clear Plan</button>
+        <button class="btn btn-secondary btn-sm" id="btn-docked-print">\u{1F5A8}\u{FE0F} Print</button>
       </div>
 
-      <!-- Timeline Days List -->
+      <!-- Timeline Days List: always the full week -->
       <div class="docked-timeline-list">
-        ${itinerary.length ? itinerary.map(item => this.renderItineraryDayCard(item)).join('') : `
-          <div class="empty-timeline-card">
-            <div style="font-size: 32px; margin-bottom: 8px;">🗺️</div>
-            <h4>Your Travel Plan is Empty</h4>
-            <p>Click any point or state on the map, or search a destination to add days, hotels, and activities.</p>
-            <div style="display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap;">
-              <button class="btn btn-primary btn-sm" id="btn-empty-add-first-day">+ Add First Day</button>
-              <button class="btn btn-secondary btn-sm" id="btn-docked-load-nyc">Load NYC & Tokyo Showcase</button>
-            </div>
-          </div>
-        `}
+        ${itinerary.map(item => this.renderItineraryDayCard(item)).join('')}
       </div>
+
+      ${scheduledCount === 0 ? `
+        <div class="empty-timeline-card">
+          <div style="font-size: 30px; margin-bottom: 6px;">\u{1F5FA}\u{FE0F}</div>
+          <h4>Nothing scheduled yet</h4>
+          <p>Search a destination or click anywhere on the map, then add a stay or an activity. You will be asked which day and what time.</p>
+        </div>
+      ` : ''}
     `;
 
     // Plan dropdown switch
@@ -1100,52 +1233,13 @@ export class TravelFixUI {
       });
     }
 
-    // Template clicks
-    const btnNyc = this.dockedPlannerBody.querySelector('#btn-tpl-nyc-tokyo');
-    if (btnNyc) {
-      btnNyc.addEventListener('click', () => {
-        this.planner.loadTemplate('nyc-tokyo');
-        this.renderPlanner();
-        this.showToast('Loaded NYC & Tokyo showcase schedule!', 'success');
-      });
-    }
-
-    const btnSa = this.dockedPlannerBody.querySelector('#btn-tpl-sa');
-    if (btnSa) {
-      btnSa.addEventListener('click', () => {
-        this.planner.loadTemplate('south-america');
-        this.renderPlanner();
-        this.showToast('Loaded South America showcase schedule!', 'success');
-      });
-    }
-
-    const btnEmptyAddFirst = this.dockedPlannerBody.querySelector('#btn-empty-add-first-day');
-    if (btnEmptyAddFirst) {
-      btnEmptyAddFirst.addEventListener('click', () => {
-        this.planner.addDay('Monday');
-        this.renderPlanner();
-        this.showToast('Added Monday to itinerary!', 'success');
-      });
-    }
-
-    const btnEmptyLoad = this.dockedPlannerBody.querySelector('#btn-docked-load-nyc');
-    if (btnEmptyLoad) {
-      btnEmptyLoad.addEventListener('click', () => {
-        this.planner.loadTemplate('nyc-tokyo');
-        this.renderPlanner();
-      });
-    }
-
-    // Add Day
-    const btnAddDay = this.dockedPlannerBody.querySelector('#btn-docked-add-day');
-    if (btnAddDay) {
-      btnAddDay.addEventListener('click', () => {
-        const days = this.planner.getDays();
-        const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-        const nextDay = dayNames[days.length % 7];
-        this.planner.addDay(nextDay);
-        this.renderPlanner();
-        this.showToast(`Added ${nextDay} to schedule!`, 'success');
+    // Week start date
+    const inputStart = this.dockedPlannerBody.querySelector('#input-plan-start');
+    if (inputStart) {
+      inputStart.addEventListener('change', (e) => {
+        if (this.planner.setStartDate(e.target.value)) {
+          this.renderPlanner();
+        }
       });
     }
 
@@ -1173,14 +1267,42 @@ export class TravelFixUI {
       btnPrint.addEventListener('click', () => window.print());
     }
 
-    // Day Actions (Remove Day)
-    this.dockedPlannerBody.querySelectorAll('.btn-remove-day').forEach(btn => {
+    // Clear a single day (the day itself stays in the week)
+    this.dockedPlannerBody.querySelectorAll('.btn-clear-day').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const idx = parseInt(btn.getAttribute('data-index'), 10);
-        this.planner.removeDay(idx);
+        const dayName = this.planner.getDay(idx).dayName;
+        this.planner.clearDay(idx);
         this.renderPlanner();
-        this.showToast('Removed day from itinerary.', 'info');
+        this.showToast(`Cleared ${dayName}.`, 'info');
+      });
+    });
+
+    // Move / retime an already-scheduled stay or activity
+    this.dockedPlannerBody.querySelectorAll('.btn-reschedule').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const dayIdx = parseInt(btn.getAttribute('data-day-idx'), 10);
+        const kind = btn.getAttribute('data-kind');
+        const day = this.planner.getDay(dayIdx);
+        if (!day) return;
+
+        if (kind === 'stay') {
+          const found = this.planner.findLivingSpace(day.stay && day.stay.livingSpaceId);
+          if (found) {
+            this.openScheduleDialog({
+              kind: 'stay', item: found.stay, destination: found.destination, fromDayIndex: dayIdx
+            });
+          }
+        } else {
+          const found = this.planner.findActivity(btn.getAttribute('data-act-id'));
+          if (found) {
+            this.openScheduleDialog({
+              kind: 'activity', item: found.activity, destination: found.destination, fromDayIndex: dayIdx
+            });
+          }
+        }
       });
     });
 
@@ -1226,15 +1348,15 @@ export class TravelFixUI {
 
   renderItineraryDayCard(item) {
     const dest = item.destination;
-    const destName = dest ? dest.name : 'En Route / Transit';
+    const destName = dest ? dest.name : (item.isEmpty ? 'Nothing planned' : 'En Route / Transit');
 
     return `
-      <div class="timeline-day-card ${item.dayName === 'Monday' || item.dayName === 'Friday' ? 'showcase-highlight' : ''}">
+      <div class="timeline-day-card ${item.isEmpty ? 'day-empty' : ''}">
         <div class="day-badge-col">
-          <div class="day-name-title">${item.dayName}</div>
-          <div class="day-date-sub">${item.date || 'Upcoming'}</div>
-          ${dest ? `<button class="btn-flyto-dest" data-dest-id="${dest.id}" title="Focus on Map">🗺️ Explore</button>` : ''}
-          <button class="btn-share-day-chat" data-day-idx="${item.index}" title="Share this day in chat">💬 Share</button>
+          <div class="day-name-title">${esc(item.dayName)}</div>
+          <div class="day-date-sub">${esc(item.date || '')}</div>
+          ${dest ? `<button class="btn-flyto-dest" data-dest-id="${esc(dest.id)}" title="Focus on map">\u{1F5FA}\u{FE0F} Explore</button>` : ''}
+          ${!item.isEmpty ? `<button class="btn-share-day-chat" data-day-idx="${item.index}" title="Share this day in chat">\u{1F4AC} Share</button>` : ''}
         </div>
 
         <div class="day-content-col">
@@ -1243,56 +1365,59 @@ export class TravelFixUI {
               <h4 class="day-dest-title">${esc(destName)} ${dest ? `<span class="dest-flag">${esc(dest.country)}</span>` : ''}</h4>
               <div class="day-notes">${esc(item.notes || '')}</div>
             </div>
-            <button class="btn-remove-day" data-index="${item.index}" title="Remove this day">✕</button>
+            ${!item.isEmpty ? `<button class="btn-clear-day" data-index="${item.index}" title="Clear this day">\u2715</button>` : ''}
           </div>
 
-          <!-- Transit Info -->
           ${item.transit ? `
             <div class="itinerary-transit-box">
-              <span>✈️ <b>${item.transit.type}</b>: ${item.transit.from} &rarr; ${item.transit.to} (${item.transit.duration})</span>
+              <span>\u2708\u{FE0F} <b>${esc(item.transit.type)}</b>: ${esc(item.transit.from)} &rarr; ${esc(item.transit.to)} (${esc(item.transit.duration)})</span>
               <span class="transit-price">+$${item.transit.estimatedCost}</span>
             </div>
           ` : ''}
 
-          <!-- Chosen Living Space -->
           <div class="itinerary-item-row stay-row">
-            <div class="item-icon">🏨</div>
+            <div class="item-icon">\u{1F3E8}</div>
             <div class="item-details">
               <div class="item-label">Living Space</div>
               ${item.livingSpace ? `
-                <div class="item-title">${item.livingSpace.name}</div>
-                <div class="item-sub">${item.livingSpace.type} &bull; ⭐ ${item.livingSpace.rating}</div>
+                <div class="item-title">${esc(item.livingSpace.name)}</div>
+                <div class="item-sub">${esc(item.livingSpace.type)} &bull; \u2B50 ${esc(item.livingSpace.rating)}</div>
+                <div class="item-slot">\u{1F552} ${esc(describeSlot(item.staySlot))}</div>
               ` : `
-                <div class="item-empty">No hotel selected yet.</div>
+                <div class="item-empty">No stay booked for this day.</div>
               `}
             </div>
             ${item.livingSpace ? `
-              <div class="item-cost">$${item.livingSpace.pricePerNight} <small>/ nt</small></div>
+              <div class="item-actions-col">
+                <div class="item-cost">$${item.livingSpace.pricePerNight} <small>/ nt</small></div>
+                <button class="btn-reschedule" data-kind="stay" data-day-idx="${item.index}" title="Change day or time">Move</button>
+              </div>
             ` : ''}
           </div>
 
-          <!-- Chosen Activities -->
           <div class="itinerary-item-row act-row">
-            <div class="item-icon">🧭</div>
+            <div class="item-icon">\u{1F9ED}</div>
             <div class="item-details">
-              <div class="item-label">Activities & Sights</div>
+              <div class="item-label">Activities &amp; Sights</div>
               ${item.activities.length ? `
                 <div class="itinerary-acts-list">
                   ${item.activities.map(act => `
                     <div class="act-sub-item">
                       <div class="act-sub-info">
                         <b>${esc(act.title)}</b>
-                        <span>⏱️ ${act.duration || '3 Hours'}</span>
+                        <span class="act-sub-slot">\u{1F552} ${esc(describeSlot(act.slot))}</span>
+                        <span>\u23F1\u{FE0F} ${esc(act.duration || '3 Hours')}</span>
                       </div>
                       <div class="act-sub-right">
                         <span class="act-price-badge">$${act.price}</span>
-                        <button class="btn-remove-act-from-day" data-day-idx="${item.index}" data-act-id="${act.id}" title="Remove activity">✕</button>
+                        <button class="btn-reschedule" data-kind="activity" data-day-idx="${item.index}" data-act-id="${esc(act.id)}" title="Change day or time">Move</button>
+                        <button class="btn-remove-act-from-day" data-day-idx="${item.index}" data-act-id="${esc(act.id)}" title="Remove activity">\u2715</button>
                       </div>
                     </div>
                   `).join('')}
                 </div>
               ` : `
-                <div class="item-empty">No activities scheduled yet.</div>
+                <div class="item-empty">Nothing scheduled.</div>
               `}
             </div>
           </div>
@@ -1506,9 +1631,9 @@ export class TravelFixUI {
 
   shareCurrentItineraryDayToChat() {
     if (!this.chat) return;
-    const days = this.planner.resolveItinerary();
+    const days = this.planner.getScheduledDays();
     if (!days.length) {
-      this.showToast('No days scheduled yet in your itinerary.', 'info');
+      this.showToast('Nothing scheduled yet — add a stay or activity first.', 'info');
       return;
     }
 
@@ -1656,7 +1781,9 @@ export class TravelFixUI {
       form.addEventListener('submit', (e) => {
         e.preventDefault();
         this.bookingModal.classList.add('hidden');
-        this.showToast(`🎉 Reservation confirmed at ${stay.name}!`, 'success');
+        // Booking is not a real reservation, so the useful outcome is putting
+        // the stay on the plan — which still needs a day and a check-in time.
+        this.openScheduleDialog({ kind: 'stay', item: stay, destination: dest });
       });
     }
   }

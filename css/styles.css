@@ -655,6 +655,9 @@ html, body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* Label + select + three buttons do not fit on one 440px line, so let the
+     actions drop to a second row rather than crushing the select. */
+  flex-wrap: wrap;
   background: rgba(15, 23, 42, 0.7);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -664,7 +667,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
+  flex: 1 1 190px;
   min-width: 0;
 }
 .plan-select-dropdown {
@@ -675,9 +678,15 @@ html, body {
   padding: 6px 10px;
   font-size: 12px;
   font-weight: 700;
+  font-family: inherit;
   outline: none;
   cursor: pointer;
-  max-width: 210px;
+  /* A <select> sizes itself to its longest option unless it is explicitly
+     allowed to shrink, which is what pushed it over the action buttons. */
+  flex: 1;
+  width: 100%;
+  min-width: 110px;
+  max-width: 100%;
   text-overflow: ellipsis;
   overflow: hidden;
   white-space: nowrap;
@@ -689,6 +698,7 @@ html, body {
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-shrink: 0;
 }
 .btn-plan-action {
   background: rgba(255, 255, 255, 0.05);
@@ -713,36 +723,38 @@ html, body {
   background: rgba(239, 68, 68, 0.1);
 }
 
-.planner-docked-templates {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 .t-lbl {
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
 }
-.btn-template-chip {
-  background: rgba(255, 255, 255, 0.04);
+
+/* Week start date row (replaced the showcase template switcher) */
+.planner-week-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.plan-date-input {
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  padding: 4px 10px;
-  font-size: 11px;
-  font-weight: 600;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 5px 9px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  color-scheme: dark;
 }
-.btn-template-chip:hover {
+.plan-date-input:focus {
+  outline: none;
   border-color: var(--accent-cyan);
-  color: var(--accent-cyan);
 }
-.btn-template-chip.active {
-  background: rgba(0, 242, 254, 0.15);
-  border-color: var(--accent-cyan);
-  color: var(--accent-cyan);
+.planner-week-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
 }
 
 .planner-docked-actions {
@@ -764,8 +776,12 @@ html, body {
   border-radius: var(--radius-md);
   overflow: hidden;
 }
-.timeline-day-card.showcase-highlight {
-  border-color: rgba(0, 242, 254, 0.4);
+.timeline-day-card.day-empty {
+  opacity: 0.62;
+  border-style: dashed;
+}
+.timeline-day-card.day-empty:hover {
+  opacity: 1;
 }
 
 .day-badge-col {
@@ -1932,3 +1948,225 @@ html, body {
   }
 }
 
+
+
+/* ==========================================================================
+   SCHEDULING DIALOG (pick a day and a time slot)
+   ========================================================================== */
+
+.schedule-dialog {
+  width: 520px;
+}
+.schedule-subject {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px !important;
+}
+.schedule-subject b {
+  color: #ffffff;
+  font-size: 14px;
+}
+.schedule-price {
+  color: var(--accent-cyan);
+  font-weight: 700;
+  font-size: 12px;
+}
+.schedule-dest {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.schedule-section {
+  margin-bottom: 18px;
+}
+.schedule-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.day-chip-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+.day-chip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 2px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+}
+.day-chip:hover {
+  border-color: var(--accent-cyan);
+  color: var(--text-primary);
+}
+.day-chip.active {
+  background: rgba(0, 242, 254, 0.15);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+.day-chip-name {
+  font-size: 12px;
+  font-weight: 800;
+}
+.day-chip-date {
+  font-size: 9px;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.day-chip-count {
+  position: absolute;
+  top: -5px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  border-radius: var(--radius-full);
+  background: var(--accent-cyan);
+  color: #04202a;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 15px;
+}
+
+.slot-chip-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 6px;
+}
+.slot-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: all var(--transition-fast);
+}
+.slot-chip:hover {
+  border-color: var(--accent-cyan);
+  color: var(--text-primary);
+}
+.slot-chip.active {
+  background: rgba(0, 242, 254, 0.15);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+.slot-chip-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+.slot-chip-time {
+  font-size: 9.5px;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.custom-time-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+}
+.custom-time-row[hidden] {
+  display: none;
+}
+.custom-time-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.custom-time-row input[type="time"] {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  color-scheme: dark;
+}
+.custom-time-row input[type="time"]:focus {
+  outline: none;
+  border-color: var(--accent-cyan);
+}
+
+.quick-modal-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.btn-danger {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #ffffff;
+}
+
+/* Time slot shown on planned items */
+.item-slot,
+.act-sub-slot {
+  font-size: 10.5px;
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+.item-actions-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+.btn-reschedule {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.btn-reschedule:hover {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+.btn-clear-day {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.btn-clear-day:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
