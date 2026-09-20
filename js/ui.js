@@ -1499,9 +1499,10 @@ export class TravelFixUI {
     if (!messages.length) {
       this.dockedChatMessages.innerHTML = `
         <div class="chat-empty-state">
-          <span>💬</span>
-          <h4>No messages in this channel yet</h4>
-          <p>Send a message, discuss dates, or share your travel plan!</p>
+          <span>📝</span>
+          <h4>No messages yet</h4>
+          <p>Notes you write here stay in this browser. Share a day from your
+             plan, or jot down what you are still deciding.</p>
         </div>
       `;
       return;
@@ -1656,6 +1657,12 @@ export class TravelFixUI {
   // ==========================================
 
   openInviteModal() {
+    // Inviting someone means sending them something, which needs a server.
+    // Rather than collect an address and quietly drop it, say so plainly.
+    if (this.chat && !this.chat.canInvite()) {
+      this.showInviteUnavailable();
+      return;
+    }
     this.inviteModal.classList.remove('hidden');
     const input = document.getElementById('invite-username');
     if (input) {
@@ -1664,33 +1671,48 @@ export class TravelFixUI {
     }
   }
 
+  showInviteUnavailable() {
+    const container = document.createElement('div');
+    container.innerHTML = `
+      <div class="quick-modal-overlay tf-schedule-overlay">
+        <div class="quick-modal-content schedule-dialog">
+          <h3>Invites aren't available yet</h3>
+          <p>
+            Inviting someone by email means sending them a real message and
+            giving them a real account, and this build has no server to do
+            either. Anything typed here would go nowhere.
+          </p>
+          <p>
+            What it needs \u2014 accounts, a database, a mail provider and a
+            realtime connection so messages actually travel between people
+            \u2014 is written up in <b>docs/BACKEND-SCOPE.md</b> in this repo.
+          </p>
+          <p class="invite-local-note">
+            Until then, Trip Chat is a private scratchpad: what you write
+            stays in this browser and nobody else can see it.
+          </p>
+          <div class="quick-modal-buttons">
+            <button type="button" class="btn btn-primary btn-sched-cancel">Got it</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(container);
+    const close = () => container.remove();
+    container.querySelector('.btn-sched-cancel').addEventListener('click', close);
+    container.querySelector('.tf-schedule-overlay').addEventListener('click', (e) => {
+      if (e.target.classList.contains('tf-schedule-overlay')) close();
+    });
+  }
+
   closeInviteModal() {
     this.inviteModal.classList.add('hidden');
   }
 
   handleInviteUserSubmit() {
-    const usernameInput = document.getElementById('invite-username');
-    const nameInput = document.getElementById('invite-fullname');
-    const roleSelect = document.getElementById('invite-role');
-
-    if (!usernameInput || !usernameInput.value.trim()) return;
-
-    const result = this.chat.inviteUser({
-      username: usernameInput.value.trim(),
-      name: nameInput ? nameInput.value.trim() : '',
-      role: roleSelect ? roleSelect.value : 'Traveler'
-    });
-
-    if (result.success) {
-      this.closeInviteModal();
-      this.openSidePanel();
-      this.switchPanelTab('chat');
-      this.renderChat();
-      this.updateChatBadge();
-      this.showToast(`🎉 Invited @${result.collaborator.username} to your trip crew!`, 'success');
-    } else {
-      alert(result.message);
-    }
+    // Retained so the form cannot silently appear to succeed if it is ever
+    // reachable again. Real invitations are blocked until there is a backend.
+    this.closeInviteModal();
+    this.showInviteUnavailable();
   }
 
   // ==========================================

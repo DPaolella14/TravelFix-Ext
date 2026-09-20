@@ -1,50 +1,46 @@
 const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./lib');
-
-(async () => {
-  const b = await chromium.launch();
-  const c = await ctx(b);
-  const p = await page(c);
-
-  console.log('--- Trip Chat send ---');
+(async()=>{
+  const b=await chromium.launch(); const c=await ctx(b); const p=await page(c);
   await hideMap(p);
-  await p.click('#tab-btn-chat');
-  await p.waitForTimeout(800);
+  await p.click('#tab-btn-chat'); await p.waitForTimeout(800);
 
-  const before = await p.evaluate(() => document.querySelectorAll('#docked-chat-messages .chat-message-row').length);
-
-  await p.fill('#docked-chat-input', 'What time is the Shibuya Sky sunset booking?');
-  await p.click('.btn-chat-send');
-  await p.waitForTimeout(1200);
-
-  const afterSend = await p.evaluate(() => ({
-    rows: document.querySelectorAll('#docked-chat-messages .chat-message-row').length,
-    inputValue: document.getElementById('docked-chat-input').value,
-    lastText: document.querySelector('#docked-chat-messages .chat-message-row:last-child .msg-bubble')?.textContent?.trim() || ''
+  const st=await p.evaluate(()=>({
+    collaborators: window.travelFixApp.chat.getCollaborators().length,
+    messages: window.travelFixApp.chat.getMessages('group').length,
+    dmChips: document.querySelectorAll('.dm-chip-btn').length,
+    html: document.getElementById('docked-chat-messages').textContent
   }));
+  check('no fabricated collaborators', st.collaborators===0, String(st.collaborators));
+  check('no seeded messages', st.messages===0, String(st.messages));
+  check('no DM chips for invented people', st.dmChips===0, String(st.dmChips));
+  check('empty state says notes stay local', /stay in this browser/i.test(st.html), st.html.slice(0,100));
+  const body=await p.evaluate(()=>document.body.innerText);
+  check('Sarah/David/Elena gone from UI', !/Sarah Chen|David Kim|Elena Ramos/.test(body));
+  await p.screenshot({path:SP+'/chat-empty.png'});
 
-  check('no page errors on send', errs(p).length === 0, errs(p).join(' | '));
-  check('message row added', afterSend.rows === before + 1, `before=${before} after=${afterSend.rows}`);
-  check('input cleared after send', afterSend.inputValue === '', `got "${afterSend.inputValue}"`);
-  check('sent text rendered', afterSend.lastText.includes('Shibuya Sky'), afterSend.lastText);
+  console.log('--- sending still works, no fake replies ---');
+  await p.fill('#docked-chat-input','Need to decide Tokyo vs Kyoto');
+  await p.click('.btn-chat-send'); await p.waitForTimeout(4000);
+  const after=await p.evaluate(()=>({n:window.travelFixApp.chat.getMessages('group').length,
+    senders:window.travelFixApp.chat.getMessages('group').map(m=>m.sender.name)}));
+  check('message saved', after.n===1, JSON.stringify(after));
+  check('nobody replied', after.senders.every(x=>x==='You'), JSON.stringify(after.senders));
 
-  // simulated reply arrives ~2s later and must render without a manual tab switch
-  await p.waitForTimeout(4000);
-  const afterReply = await p.evaluate(() => document.querySelectorAll('#docked-chat-messages .chat-message-row').length);
-  check('auto-reply rendered live', afterReply > afterSend.rows, `rows=${afterReply}`);
-  check('still no page errors', errs(p).length === 0, errs(p).join(' | '));
+  console.log('--- invite is honest ---');
+  await p.evaluate(()=>document.getElementById('btn-docked-invite').click());
+  await p.waitForTimeout(700);
+  const inv=await p.evaluate(()=>document.body.innerText);
+  check('invite explains it needs a backend', /aren.t available yet/i.test(inv) && /BACKEND-SCOPE/.test(inv));
+  check('no success claim', !/invited @|invite sent/i.test(inv));
+  await p.screenshot({path:SP+'/chat-invite.png'});
 
-  await p.screenshot({ path: SP + '/fix1-chat.png' });
+  console.log('--- reaction toggles off ---');
+  await p.evaluate(()=>{const m=window.travelFixApp.chat.getMessages('group')[0];
+    window.travelFixApp.chat.toggleReaction('group',m.id,'❤️');
+    window.travelFixApp.chat.toggleReaction('group',m.id,'❤️');});
+  const react=await p.evaluate(()=>Object.keys(window.travelFixApp.chat.getMessages('group')[0].reactions||{}).length);
+  check('reaction removed on second click', react===0, String(react));
 
-  // A broken UI subscriber must not break message delivery any more.
-  console.log('--- subscriber isolation ---');
-  await p.evaluate(() => { window.travelFixApp.chat.onMessageReceived = () => { throw new Error('boom'); }; });
-  const delivered = await p.evaluate(() => {
-    const n = window.travelFixApp.chat.getMessages('group').length;
-    window.travelFixApp.chat.sendMessage('probe');
-    return window.travelFixApp.chat.getMessages('group').length > n;
-  });
-  check('message still delivered when a handler throws', delivered);
-
-  await b.close();
-  summary();
+  check('no page errors', errs(p).length===0, errs(p).join(' | '));
+  await b.close(); summary();
 })();

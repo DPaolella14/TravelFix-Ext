@@ -58,10 +58,10 @@
         <!-- Workspace Layout Buttons -->
         <div class="nav-layout-switcher">
           <button id="nav-tab-planner" class="nav-workspace-btn" title="Open Travel Plan Schedule">
-            <span>📅</span> Travel Plan <span id="planner-count-badge" class="badge-count">5 Days</span>
+            <span>📅</span> Travel Plan <span id="planner-count-badge" class="badge-count">Empty</span>
           </button>
           <button id="nav-tab-chat" class="nav-workspace-btn" title="Open Trip Chat & Direct Messages">
-            <span>💬</span> Trip Chat <span id="chat-unread-badge" class="badge-count chat-badge">2</span>
+            <span>💬</span> Trip Chat <span id="chat-unread-badge" class="badge-count chat-badge" style="display:none;">0</span>
           </button>
           <button id="nav-tab-split" class="nav-workspace-btn active" title="Toggle Side-by-Side Split View">
             <span>◫</span> Split View
@@ -169,12 +169,12 @@
             <div class="docked-chat-subnav">
               <div class="docked-chat-channels">
                 <button class="chat-subnav-btn active" data-channel="group">
-                  <span>🌟</span> Group Crew
+                  <span>📝</span> Trip Notes
                 </button>
                 <div id="docked-dm-subnav" class="docked-dm-chips"></div>
               </div>
-              <button id="btn-docked-invite" class="btn-chat-invite-mini" title="Invite user by @username">
-                <span>➕</span> Invite @user
+              <button id="btn-docked-invite" class="btn-chat-invite-mini" title="Invite people to this trip">
+                <span>➕</span> Invite people
               </button>
             </div>
 
@@ -196,7 +196,7 @@
                   type="text" 
                   id="docked-chat-input" 
                   class="chat-input-field" 
-                  placeholder="Message trip crew or coordinate activities..." 
+                  placeholder="Write a note about this trip..." 
                   autocomplete="off"
                 />
                 <button type="submit" class="btn-chat-send">

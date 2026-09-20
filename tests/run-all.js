@@ -10,7 +10,7 @@
 const { execFileSync } = require('child_process');
 const path = require('path');
 
-const SUITES = ['test-chat', 'test-plan', 'test-ocean', 'test-xss', 'test-smoke'];
+const SUITES = ['test-chat', 'test-plan', 'test-sched', 'test-ocean', 'test-xss', 'test-smoke'];
 
 let totalPass = 0, totalFail = 0;
 

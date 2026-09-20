@@ -1,3 +1,6 @@
+// Data integrity + budget arithmetic.
+// The showcase plans these once relied on were removed, so this now builds a
+// plan through the public API instead of asserting on seeded data.
 const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./lib');
 
 (async () => {
@@ -5,33 +8,73 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
   const c = await ctx(b);
   const p = await page(c);
 
-  console.log('--- showcase itinerary resolves ---');
-  const itin = await p.evaluate(() => window.travelFixApp.planner.resolveItinerary().map(d => ({
-    day: d.dayName, dest: d.destination?.name || null,
-    stay: d.livingSpace?.name || null, stayPrice: d.livingSpace?.pricePerNight || 0,
-    acts: d.activities.map(a => a.price)
-  })));
-  const budget = await p.evaluate(() => window.travelFixApp.planner.calculateBudget());
-  console.log(JSON.stringify(itin, null, 1));
-  console.log('budget:', JSON.stringify(budget));
+  console.log('--- catalogue integrity ---');
+  const cat = await p.evaluate(() => {
+    const dests = window.travelFixApp.ui.destinations;
+    const ids = [];
+    dests.forEach(d => {
+      ids.push(d.id);
+      (d.livingSpaces || []).forEach(s => ids.push(s.id));
+      (d.activities || []).forEach(a => ids.push(a.id));
+    });
+    const seen = {};
+    ids.forEach(i => { seen[i] = (seen[i] || 0) + 1; });
+    const tokyo = dests.filter(d => d.id === 'tokyo');
+    return {
+      dups: Object.entries(seen).filter(([, v]) => v > 1).map(([k]) => k),
+      tokyoCount: tokyo.length,
+      tokyoStays: tokyo[0] ? tokyo[0].livingSpaces.map(s => s.id) : [],
+      tokyoActs: tokyo[0] ? tokyo[0].activities.map(a => a.id) : []
+    };
+  });
+  check('no duplicate ids anywhere in the catalogue', cat.dups.length === 0, cat.dups.join(', '));
+  check('exactly one Tokyo', cat.tokyoCount === 1, String(cat.tokyoCount));
+  check('Tokyo kept both stays', cat.tokyoStays.length === 2, cat.tokyoStays.join(', '));
+  check('Tokyo kept all three activities', cat.tokyoActs.length === 3, cat.tokyoActs.join(', '));
 
-  const thu = itin.find(d => d.day === 'Thursday');
-  const fri = itin.find(d => d.day === 'Friday');
-  check('Thursday is Tokyo', thu.dest === 'Tokyo', thu.dest);
-  check('Thursday has a hotel', !!thu.stay, String(thu.stay));
-  check('Friday has a hotel', !!fri.stay, String(fri.stay));
-  check('Friday has activities', fri.acts.length === 2, JSON.stringify(fri.acts));
+  console.log('--- budget arithmetic ---');
+  const budget = await p.evaluate(() => {
+    const app = window.travelFixApp;
+    const tokyo = app.ui.destinations.find(d => d.id === 'tokyo');
+    const pl = app.planner;
+    pl.clearPlan();
+    // Two nights at the same hotel, two activities on different days.
+    pl.setDayStay(0, tokyo.livingSpaces[0].id, null, tokyo);
+    pl.setDayStay(1, tokyo.livingSpaces[0].id, null, tokyo);
+    pl.addActivityToDay(0, tokyo.activities[0].id, null, tokyo);
+    pl.addActivityToDay(1, tokyo.activities[1].id, null, tokyo);
+    return {
+      actual: pl.calculateBudget(),
+      expectedStays: tokyo.livingSpaces[0].pricePerNight * 2,
+      expectedActs: tokyo.activities[0].price + tokyo.activities[1].price,
+      scheduled: pl.getScheduledDays().length
+    };
+  });
+  check('stays summed across days', budget.actual.livingSpacesCost === budget.expectedStays,
+    `${budget.actual.livingSpacesCost} vs ${budget.expectedStays}`);
+  check('activities summed across days', budget.actual.activitiesCost === budget.expectedActs,
+    `${budget.actual.activitiesCost} vs ${budget.expectedActs}`);
+  check('total adds up', budget.actual.total === budget.expectedStays + budget.expectedActs,
+    `${budget.actual.total}`);
+  check('two days counted as scheduled', budget.scheduled === 2, String(budget.scheduled));
 
-  const expectedStays = 980 + 980 + 0 + 1350 + 1350;
-  const expectedActs = 320 + 260 + 110 + 195;
-  check('stays total correct', budget.livingSpacesCost === expectedStays, `${budget.livingSpacesCost} vs ${expectedStays}`);
-  check('activities total correct', budget.activitiesCost === expectedActs, `${budget.activitiesCost} vs ${expectedActs}`);
-  check('grand total correct', budget.total === expectedStays + expectedActs + 1100, `${budget.total} vs ${expectedStays + expectedActs + 1100}`);
+  console.log('--- a cleared plan costs nothing ---');
+  const cleared = await p.evaluate(() => {
+    window.travelFixApp.planner.clearPlan();
+    return {
+      total: window.travelFixApp.planner.calculateBudget().total,
+      days: window.travelFixApp.planner.getDays().length,
+      scheduled: window.travelFixApp.planner.getScheduledDays().length
+    };
+  });
+  check('cleared plan totals zero', cleared.total === 0, String(cleared.total));
+  check('clearing keeps all 7 days', cleared.days === 7, String(cleared.days));
+  check('nothing marked scheduled', cleared.scheduled === 0, String(cleared.scheduled));
+
   check('no page errors', errs(p).length === 0, errs(p).join(' | '));
-
   await hideMap(p);
-  await p.waitForTimeout(500);
-  await p.screenshot({ path: SP + '/fix2-planner.png' });
+  await p.waitForTimeout(400);
+  await p.screenshot({ path: SP + '/plan.png' });
   await b.close();
   summary();
 })();

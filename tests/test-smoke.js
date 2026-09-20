@@ -12,10 +12,10 @@ const { chromium, ctx, page, hideMap, showMap, errs, check, summary, SP } = requ
   // planner
   const planner = await p.evaluate(() => {
     const el = document.getElementById('docked-planner-body');
-    return { title: el.querySelector('.docked-title')?.textContent || '', rows: el.querySelectorAll('.day-dest-title').length, html: el.innerHTML.length };
+    return { title: el.querySelector('.docked-title')?.textContent || '', rows: el.querySelectorAll('.timeline-day-card').length, html: el.innerHTML.length };
   });
-  check('plan title renders unescaped-looking', planner.title.includes('Global Metropolises') && !planner.title.includes('&amp;'), planner.title);
-  check('itinerary day cards render', planner.rows === 5, `rows=${planner.rows}`);
+  check('plan title renders', planner.title.includes('My Travel Plan') && !planner.title.includes('&amp;'), planner.title);
+  check('all seven day cards render', planner.rows === 7, `rows=${planner.rows}`);
 
   // explorer with a real destination containing an ampersand
   await p.evaluate(() => {
@@ -43,8 +43,8 @@ const { chromium, ctx, page, hideMap, showMap, errs, check, summary, SP } = requ
   // chat renders the seeded conversation
   await p.click('#tab-btn-chat');
   await p.waitForTimeout(700);
-  const chatRows = await p.evaluate(() => document.querySelectorAll('#docked-chat-messages .chat-message-row').length);
-  check('seeded chat renders', chatRows >= 3, `rows=${chatRows}`);
+  const chatEmpty = await p.evaluate(() => !!document.querySelector('#docked-chat-messages .chat-empty-state'));
+  check('chat shows its empty state', chatEmpty);
 
   // map popups still build
   await showMap(p);

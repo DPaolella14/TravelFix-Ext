@@ -2170,3 +2170,9 @@ html, body {
   color: #ef4444;
   background: rgba(239, 68, 68, 0.1);
 }
+
+.invite-local-note {
+  border-left: 2px solid var(--accent-cyan);
+  padding-left: 10px;
+  color: var(--text-muted) !important;
+}
