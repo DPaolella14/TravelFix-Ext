@@ -297,6 +297,154 @@ def main():
     status, _, _ = request('/api/auth/request-link', 'POST', {'email': 'a' * 20000 + '@e.com'})
     check('oversized body refused', status in (400, 413), f'status={status}')
 
+
+    # ------------------------------------------------------ password signup
+    print('\n--- password signup ---')
+    import secrets as _s2
+    pw_email = f'pw-{_s2.token_hex(4)}@example.com'
+    good_pw = 'a-reasonably-long-passphrase'
+
+    for weak, label in [
+        ('short', 'too short'),
+        ('password123', 'a known-common password'),
+        ('aaaaaaaaaaaa', 'too few distinct characters'),
+        ('x' * 200, 'over the length cap'),
+    ]:
+        status, _, body = request('/api/auth/signup', 'POST',
+                                  {'email': pw_email, 'password': weak})
+        check(f'rejects {label}', status == 400 and body.get('error') == 'weak_password',
+              f'status={status} {body}')
+
+    status, headers, body = request('/api/auth/signup', 'POST',
+                                    {'email': pw_email, 'password': good_pw})
+    check('signup succeeds', status == 201, f'status={status} {body}')
+    check('signup returns the user', body.get('user', {}).get('email') == pw_email, str(body))
+    check('signup reports the account has a password',
+          body.get('user', {}).get('hasPassword') is True, str(body.get('user')))
+    check('signup does not claim the email is verified',
+          body.get('user', {}).get('emailVerified') is False, str(body.get('user')))
+    check('signup opens a session', 'HttpOnly' in headers.get('Set-Cookie', ''),
+          headers.get('Set-Cookie', ''))
+
+    status, _, body = request('/api/auth/signup', 'POST',
+                              {'email': pw_email, 'password': good_pw})
+    check('duplicate signup is refused', status == 409 and body.get('error') == 'email_taken',
+          f'status={status}')
+
+    # ------------------------------------------------ password storage
+    print('\n--- password storage ---')
+    with db_conn() as conn:
+        stored = conn.execute(
+            'SELECT password_hash FROM users WHERE email_normalised = ?', (pw_email,)
+        ).fetchone()[0]
+    check('password is not stored in the clear', good_pw not in stored, stored[:40])
+    check('hash is salted scrypt or pbkdf2',
+          stored.split('$')[0] in ('scrypt', 'pbkdf2_sha256'), stored.split('$')[0])
+    check('hash records its parameters', len(stored.split('$')) >= 4, stored[:40])
+
+    # two accounts, same password, different hashes -> per-password salt
+    other_email = f'pw2-{_s2.token_hex(4)}@example.com'
+    request('/api/auth/signup', 'POST', {'email': other_email, 'password': good_pw})
+    with db_conn() as conn:
+        other = conn.execute(
+            'SELECT password_hash FROM users WHERE email_normalised = ?', (other_email,)
+        ).fetchone()[0]
+    check('identical passwords hash differently (unique salts)', stored != other)
+
+    # --------------------------------------------------------- login
+    print('\n--- password login ---')
+    jar2 = http.cookiejar.CookieJar()
+    status, headers, body = request('/api/auth/login', 'POST',
+                                    {'email': pw_email, 'password': good_pw}, jar=jar2)
+    check('correct credentials log in', status == 200, f'status={status} {body}')
+    check('login opens a session', 'HttpOnly' in headers.get('Set-Cookie', ''))
+
+    status, _, body = request('/api/auth/me', jar=jar2)
+    check('session works after login', body.get('user', {}).get('email') == pw_email, str(body))
+
+    status_wrong, _, body_wrong = request('/api/auth/login', 'POST',
+                                          {'email': pw_email, 'password': 'wrong-password-here'})
+    status_unknown, _, body_unknown = request(
+        '/api/auth/login', 'POST',
+        {'email': f'ghost-{_s2.token_hex(4)}@example.com', 'password': 'wrong-password-here'})
+    check('wrong password is refused', status_wrong == 401, f'status={status_wrong}')
+    check('unknown account and wrong password are indistinguishable',
+          status_wrong == status_unknown and body_wrong == body_unknown,
+          f'{body_wrong} vs {body_unknown}')
+    check('login error names neither field',
+          'incorrect' in body_wrong.get('message', '').lower()
+          and 'no such' not in body_wrong.get('message', '').lower(),
+          body_wrong.get('message', ''))
+
+    # case-insensitive email, case-sensitive password
+    status, _, _ = request('/api/auth/login', 'POST',
+                           {'email': pw_email.upper(), 'password': good_pw})
+    check('email matching ignores case', status == 200, f'status={status}')
+    status, _, _ = request('/api/auth/login', 'POST',
+                           {'email': pw_email, 'password': good_pw.upper()})
+    check('password matching respects case', status == 401, f'status={status}')
+
+    # ----------------------------------------------------- login timing
+    print('\n--- login timing ---')
+    def timed(email, password):
+        start = time.perf_counter()
+        request('/api/auth/login', 'POST', {'email': email, 'password': password})
+        return time.perf_counter() - start
+
+    known_times = [timed(pw_email, 'wrong-password-here') for _ in range(3)]
+    unknown_times = [timed(f'ghost2-{_s2.token_hex(4)}@example.com', 'wrong-password-here')
+                     for _ in range(3)]
+    known_avg = sum(known_times) / len(known_times)
+    unknown_avg = sum(unknown_times) / len(unknown_times)
+    ratio = max(known_avg, unknown_avg) / max(min(known_avg, unknown_avg), 1e-6)
+    check('known and unknown accounts take comparable time', ratio < 3.0,
+          f'known={known_avg*1000:.0f}ms unknown={unknown_avg*1000:.0f}ms ratio={ratio:.2f}')
+
+    # --------------------------------------------------- change password
+    print('\n--- changing a password ---')
+    status, _, body = request('/api/auth/set-password', 'POST',
+                              {'password': 'another-long-passphrase'})
+    check('changing a password needs a session', status == 401, f'status={status}')
+
+    status, _, body = request('/api/auth/set-password', 'POST',
+                              {'currentPassword': 'not-the-right-one',
+                               'password': 'another-long-passphrase'}, jar=jar2)
+    check('wrong current password is refused', status == 403, f'status={status}')
+
+    status, _, body = request('/api/auth/set-password', 'POST',
+                              {'currentPassword': good_pw, 'password': 'short'}, jar=jar2)
+    check('a weak new password is refused', status == 400, f'status={status}')
+
+    new_pw = 'a-different-long-passphrase'
+    status, headers, body = request('/api/auth/set-password', 'POST',
+                                    {'currentPassword': good_pw, 'password': new_pw}, jar=jar2)
+    check('password change succeeds', status == 200, f'status={status} {body}')
+    check('change issues a fresh session cookie', 'HttpOnly' in headers.get('Set-Cookie', ''))
+
+    status, _, _ = request('/api/auth/login', 'POST', {'email': pw_email, 'password': good_pw})
+    check('the old password stops working', status == 401, f'status={status}')
+    status, _, _ = request('/api/auth/login', 'POST', {'email': pw_email, 'password': new_pw})
+    check('the new password works', status == 200, f'status={status}')
+
+    # ------------------------------------------- cross-origin on new routes
+    print('\n--- cross-origin on password routes ---')
+    for route in ['/api/auth/signup', '/api/auth/login', '/api/auth/set-password']:
+        status, _, _ = request(route, 'POST',
+                               {'email': 'x@example.com', 'password': 'a-long-passphrase-x'},
+                               headers={'Origin': 'https://evil.example'})
+        check(f'{route} rejects another origin', status == 403, f'status={status}')
+
+    # ------------------------------------------------- login rate limiting
+    print('\n--- login rate limiting ---')
+    burst = f'burst-login-{_s2.token_hex(4)}@example.com'
+    request('/api/auth/signup', 'POST', {'email': burst, 'password': 'yet-another-passphrase'})
+    codes = []
+    for _ in range(12):
+        s, _, _ = request('/api/auth/login', 'POST',
+                          {'email': burst, 'password': 'definitely-wrong-here'})
+        codes.append(s)
+    check('repeated failed logins get rate limited', 429 in codes, str(codes))
+
     print(f'\n{PASS} passed, {FAIL} failed')
     return 1 if FAIL else 0
 

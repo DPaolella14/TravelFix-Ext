@@ -25,6 +25,7 @@ import threading
 import time
 
 import db
+import passwords
 from config import (
     LOGIN_TOKEN_TTL_SECONDS, SESSION_TTL_SECONDS,
     RATE_LIMIT_PER_IP, RATE_LIMIT_PER_EMAIL, RATE_LIMIT_WINDOW_SECONDS,
@@ -90,6 +91,11 @@ class RateLimiter:
             self._hits[key] = bucket
             return True
 
+    def clear(self, key):
+        """Forget a key's history, e.g. after a successful login."""
+        with self._lock:
+            self._hits.pop(key, None)
+
     def reset(self):
         with self._lock:
             self._hits.clear()
@@ -106,6 +112,105 @@ def check_signin_limits(ip, email_normalised):
     ip_ok = limiter.check(f'ip:{ip}', RATE_LIMIT_PER_IP)
     email_ok = limiter.check(f'email:{email_normalised}', RATE_LIMIT_PER_EMAIL)
     return ip_ok and email_ok
+
+
+# Password logins get their own, tighter budget. scrypt makes each attempt
+# cost ~150ms, and this caps how many an attacker gets per window, which is
+# what keeps online guessing far away from offline guessing rates.
+LOGIN_ATTEMPTS_PER_ACCOUNT = 8
+LOGIN_ATTEMPTS_PER_IP = 25
+LOGIN_WINDOW_SECONDS = 15 * 60
+
+
+def check_login_limits(ip, email_normalised):
+    account_ok = limiter.check(
+        f'login-acct:{email_normalised}', LOGIN_ATTEMPTS_PER_ACCOUNT, LOGIN_WINDOW_SECONDS)
+    ip_ok = limiter.check(f'login-ip:{ip}', LOGIN_ATTEMPTS_PER_IP, LOGIN_WINDOW_SECONDS)
+    return account_ok and ip_ok
+
+
+def clear_login_limits(ip, email_normalised):
+    """
+    Called after a successful login. The budget exists to slow down guessing,
+    and a correct password is proof this is not guessing — without this, a
+    user who mistypes a few times then succeeds stays one slip away from
+    being locked out of their own account.
+    """
+    limiter.clear(f'login-acct:{email_normalised}')
+    limiter.clear(f'login-ip:{ip}')
+
+
+def check_signup_limits(ip):
+    return limiter.check(f'signup-ip:{ip}', RATE_LIMIT_PER_IP, RATE_LIMIT_WINDOW_SECONDS)
+
+
+# ------------------------------------------------------ password accounts
+
+def register(email, password):
+    """
+    Create an account with a password.
+
+    Returns (user_id, error_code). error_code is 'exists' when the address is
+    already registered — see the note in docs/BACKEND-SETUP.md about why
+    signup answers this honestly while login deliberately does not.
+    """
+    normalised = normalise_email(email)
+    if db.get_user_by_email(normalised) is not None:
+        return None, 'exists'
+    user_id = db.create_user_with_password(
+        email.strip(), normalised, passwords.hash_password(password)
+    )
+    return user_id, None
+
+
+def authenticate(email, password):
+    """
+    Check an email and password pair.
+
+    Returns the user row, or None. Every failure path costs about the same
+    amount of time: when the account does not exist, or exists without a
+    password, a dummy hash is computed anyway so the response cannot be
+    told apart with a stopwatch.
+    """
+    normalised = normalise_email(email)
+    user = db.get_user_by_email(normalised)
+
+    if user is None or not user['password_hash']:
+        passwords.dummy_verify()
+        return None
+
+    if not passwords.verify_password(password, user['password_hash']):
+        return None
+
+    # Opportunistic upgrade if the stored parameters are now below standard.
+    if passwords.needs_rehash(user['password_hash']):
+        db.set_password_hash(user['id'], passwords.hash_password(password))
+
+    return user
+
+
+def set_password(user_id, password, keep_session_hash=None):
+    """
+    Set or change a password.
+
+    Every other session for the account is dropped, so changing a password
+    after a suspected compromise actually evicts the intruder. The caller's
+    own session is recreated by the handler.
+    """
+    db.set_password_hash(user_id, passwords.hash_password(password))
+    db.delete_user_sessions(user_id)
+
+
+def start_session(user_id, user_agent):
+    """Open a session and return its raw token for the cookie."""
+    raw = new_token()
+    db.create_session(
+        user_id=user_id,
+        token_hash=hash_token(raw),
+        expires_at=db.now() + SESSION_TTL_SECONDS,
+        user_agent=user_agent,
+    )
+    return raw
 
 
 # --------------------------------------------------------------- sign-in
@@ -167,13 +272,7 @@ def complete_sign_in(raw_token, user_agent):
     user_id = row['user_id']
     db.mark_email_verified(user_id)
 
-    session_raw = new_token()
-    db.create_session(
-        user_id=user_id,
-        token_hash=hash_token(session_raw),
-        expires_at=db.now() + SESSION_TTL_SECONDS,
-        user_agent=user_agent,
-    )
+    session_raw = start_session(user_id, user_agent)
     return session_raw, db.get_user_by_id(user_id)
 
 

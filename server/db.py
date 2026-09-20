@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS users (
     email             TEXT    NOT NULL,
     email_normalised  TEXT    NOT NULL UNIQUE,
     display_name      TEXT,
+    password_hash     TEXT,
     email_verified_at INTEGER,
+    password_set_at   INTEGER,
     created_at        INTEGER NOT NULL
 );
 
@@ -67,6 +69,14 @@ def connect():
 def init():
     conn = connect()
     conn.executescript(SCHEMA)
+    # Additive migration for databases created before passwords existed.
+    existing = {row['name'] for row in conn.execute('PRAGMA table_info(users)')}
+    for column, ddl in (
+        ('password_hash', 'ALTER TABLE users ADD COLUMN password_hash TEXT'),
+        ('password_set_at', 'ALTER TABLE users ADD COLUMN password_set_at INTEGER'),
+    ):
+        if column not in existing:
+            conn.execute(ddl)
     conn.commit()
 
 
@@ -102,6 +112,33 @@ def mark_email_verified(user_id):
         'UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?',
         (now(), user_id)
     )
+    conn.commit()
+
+
+def set_password_hash(user_id, password_hash):
+    conn = connect()
+    conn.execute(
+        'UPDATE users SET password_hash = ?, password_set_at = ? WHERE id = ?',
+        (password_hash, now(), user_id)
+    )
+    conn.commit()
+
+
+def create_user_with_password(email, email_normalised, password_hash):
+    conn = connect()
+    cur = conn.execute(
+        'INSERT INTO users (email, email_normalised, password_hash, password_set_at, created_at)'
+        ' VALUES (?, ?, ?, ?, ?)',
+        (email, email_normalised, password_hash, now(), now())
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def delete_user_sessions(user_id):
+    """Used when a password changes: every other device is signed out."""
+    conn = connect()
+    conn.execute('DELETE FROM sessions WHERE user_id = ?', (user_id,))
     conn.commit()
 
 
@@ -168,7 +205,7 @@ def create_session(user_id, token_hash, expires_at, user_agent):
 
 def find_session(token_hash):
     return connect().execute(
-        'SELECT s.*, u.email, u.display_name, u.email_verified_at'
+        'SELECT s.*, u.email, u.display_name, u.email_verified_at, u.password_hash'
         ' FROM sessions s JOIN users u ON u.id = s.user_id'
         ' WHERE s.token_hash = ?',
         (token_hash,)

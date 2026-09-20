@@ -2355,6 +2355,34 @@ html, body {
 .account-btn.signed-in {
   padding-left: 5px;
 }
+
+/* Logged-out call to action: the one thing in the navbar that should pull
+   the eye, so it is filled rather than outlined like everything else. */
+.account-cta {
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-indigo));
+  border-color: transparent;
+  color: #04202a;
+  font-weight: 800;
+  padding: 8px 18px;
+  box-shadow: 0 0 18px rgba(0, 242, 254, 0.35);
+}
+.account-cta:hover {
+  color: #04202a;
+  border-color: transparent;
+  filter: brightness(1.08);
+  box-shadow: 0 0 26px rgba(0, 242, 254, 0.55);
+  transform: translateY(-1px);
+}
+.account-cta-icon {
+  font-size: 13px;
+}
+.account-warn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent-amber);
+  flex-shrink: 0;
+}
 .account-avatar {
   width: 24px;
   height: 24px;
@@ -2438,4 +2466,129 @@ html, body {
   border: 1px solid rgba(16, 185, 129, 0.3);
   border-radius: var(--radius-full);
   padding: 2px 8px;
+}
+
+
+/* ---------------------------------------------------- log in / sign up --- */
+
+.auth-dialog {
+  width: 420px;
+}
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(6, 10, 18, 0.7);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  padding: 3px;
+  margin-bottom: 18px;
+}
+.auth-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 0;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.auth-tab:hover {
+  color: var(--text-primary);
+}
+.auth-tab.active {
+  background: linear-gradient(135deg, rgba(0, 242, 254, 0.25), rgba(56, 189, 248, 0.15));
+  border: 1px solid rgba(0, 242, 254, 0.4);
+  color: var(--accent-cyan);
+}
+
+.auth-heading {
+  margin-bottom: 4px !important;
+}
+.auth-sub {
+  margin-bottom: 18px !important;
+}
+.auth-buttons {
+  margin-top: 14px;
+}
+
+.password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.password-wrap .account-input {
+  padding-right: 62px;
+}
+.password-reveal {
+  position: absolute;
+  right: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.password-reveal:hover {
+  color: var(--accent-cyan);
+  background: rgba(0, 242, 254, 0.08);
+}
+.password-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding: 2px 0 4px;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+.btn-block {
+  width: 100%;
+  justify-content: center;
+}
+.auth-forgot {
+  font-size: 11px !important;
+  color: var(--text-muted) !important;
+  text-align: center;
+  margin: 10px 0 0 !important;
+}
+
+.account-unverified {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-amber);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+}
+.account-menu-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 16px 0 4px;
 }

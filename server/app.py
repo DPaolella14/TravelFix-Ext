@@ -9,8 +9,11 @@ Standard library only — no pip install, no build step.
     python server.py --open     opens a browser too
 
 Endpoints
-    POST /api/auth/request-link   { email }      -> always 202
+    POST /api/auth/signup         { email, password } -> account + session
+    POST /api/auth/login          { email, password } -> session
+    POST /api/auth/request-link   { email }           -> always 202
     GET  /api/auth/verify?token=  sets cookie, redirects to /
+    POST /api/auth/set-password   { password }        -> needs a session
     GET  /api/auth/me             current user or null
     POST /api/auth/logout         clears the session
 """
@@ -29,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import auth
 import db
 import mailer
+import passwords
 from config import (
     BASE_URL, COOKIE_SECURE, LOGIN_TOKEN_TTL_SECONDS, MAIL_ENABLED,
     PORT, ROOT, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS,
@@ -137,10 +141,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def user_payload(self, row):
         if row is None:
             return None
+        keys = row.keys()
         return {
             'email': row['email'],
             'displayName': row['display_name'],
             'emailVerified': bool(row['email_verified_at']),
+            'hasPassword': bool(row['password_hash']) if 'password_hash' in keys else False,
         }
 
     # -------------------------------------------------------------- routes
@@ -159,11 +165,163 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path == '/api/auth/signup':
+            return self.handle_signup()
+        if parsed.path == '/api/auth/login':
+            return self.handle_login()
+        if parsed.path == '/api/auth/set-password':
+            return self.handle_set_password()
         if parsed.path == '/api/auth/request-link':
             return self.handle_request_link()
         if parsed.path == '/api/auth/logout':
             return self.handle_logout()
         return self.send_json(404, {'error': 'not_found'})
+
+    # --------------------------------------------------- password accounts
+
+    def read_credentials(self):
+        """Shared parsing for signup and login. Returns (email, password, error)."""
+        payload = self.read_json()
+        if not isinstance(payload, dict):
+            return None, None, (400, {'error': 'bad_request'})
+
+        email = payload.get('email')
+        password = payload.get('password')
+        if not isinstance(email, str) or not isinstance(password, str):
+            return None, None, (400, {'error': 'bad_request'})
+
+        return email.strip(), password, None
+
+    def handle_signup(self):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+
+        email, password, error = self.read_credentials()
+        if error:
+            return self.send_json(*error)
+
+        if not auth.is_valid_email(email):
+            return self.send_json(400, {
+                'error': 'invalid_email',
+                'message': 'That does not look like an email address.'
+            })
+
+        problem = passwords.validate(password, email)
+        if problem:
+            return self.send_json(400, {'error': 'weak_password', 'message': problem})
+
+        if not auth.check_signup_limits(self.client_ip()):
+            return self.send_json(429, {
+                'error': 'rate_limited',
+                'message': 'Too many sign-up attempts. Try again in a little while.'
+            })
+
+        user_id, failure = auth.register(email, password)
+        if failure == 'exists':
+            # Signup answers this honestly, unlike login. The trade-off is
+            # documented in docs/BACKEND-SETUP.md: hiding it makes signup
+            # unusable, and signup is rate limited per IP to blunt scraping.
+            return self.send_json(409, {
+                'error': 'email_taken',
+                'message': 'That email already has an account. Log in instead.'
+            })
+
+        # Signed in immediately; the address is not verified yet, and the UI
+        # says so rather than pretending otherwise.
+        session_token = auth.start_session(user_id, self.headers.get('User-Agent'))
+
+        raw_token = auth.begin_sign_in(email, self.client_ip())
+        link = f'{BASE_URL}/api/auth/verify?token={urllib.parse.quote(raw_token)}'
+        sent, _ = mailer.send_login_link(auth.normalise_email(email), link,
+                                         LOGIN_TOKEN_TTL_SECONDS // 60)
+
+        header, value = self.cookie_header(session_token, SESSION_TTL_SECONDS)
+        return self.send_json(201, {
+            'ok': True,
+            'user': self.user_payload(db.get_user_by_id(user_id)),
+            'verification': 'email' if sent else 'console',
+        }, extra_headers=[(header, value)])
+
+    def handle_login(self):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+
+        email, password, error = self.read_credentials()
+        if error:
+            return self.send_json(*error)
+
+        # Deliberately identical for every failure: unknown address, wrong
+        # password, and an account with no password set all look the same.
+        generic = {
+            'error': 'invalid_credentials',
+            'message': 'Email or password is incorrect.'
+        }
+
+        if not email or not password:
+            return self.send_json(401, generic)
+
+        if not auth.check_login_limits(self.client_ip(), auth.normalise_email(email)):
+            return self.send_json(429, {
+                'error': 'rate_limited',
+                'message': 'Too many attempts. Wait a few minutes and try again.'
+            })
+
+        user = auth.authenticate(email, password)
+        if user is None:
+            return self.send_json(401, generic)
+
+        # A correct password proves this is not a guessing run, so the
+        # account's attempt budget is returned rather than left depleted.
+        auth.clear_login_limits(self.client_ip(), auth.normalise_email(email))
+
+        session_token = auth.start_session(user['id'], self.headers.get('User-Agent'))
+        header, value = self.cookie_header(session_token, SESSION_TTL_SECONDS)
+        return self.send_json(200, {
+            'ok': True,
+            'user': self.user_payload(user),
+        }, extra_headers=[(header, value)])
+
+    def handle_set_password(self):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+
+        row = auth.session_user(self.session_cookie())
+        if row is None:
+            return self.send_json(401, {'error': 'not_signed_in'})
+
+        payload = self.read_json()
+        if not isinstance(payload, dict):
+            return self.send_json(400, {'error': 'bad_request'})
+
+        new_password = payload.get('password')
+        current = payload.get('currentPassword')
+
+        # Changing an existing password requires proving you know it. Setting
+        # one for the first time (after a magic link) does not, because the
+        # emailed link already proved control of the address.
+        if row['password_hash']:
+            if not isinstance(current, str) or not passwords.verify_password(current, row['password_hash']):
+                return self.send_json(403, {
+                    'error': 'wrong_password',
+                    'message': 'Your current password is not correct.'
+                })
+
+        problem = passwords.validate(new_password, row['email'])
+        if problem:
+            return self.send_json(400, {'error': 'weak_password', 'message': problem})
+
+        user_id = row['user_id']
+        auth.set_password(user_id, new_password)
+
+        # set_password drops every session for the account, including this
+        # one, so issue a fresh cookie rather than logging the user out of
+        # the tab they are standing in.
+        session_token = auth.start_session(user_id, self.headers.get('User-Agent'))
+        header, value = self.cookie_header(session_token, SESSION_TTL_SECONDS)
+        return self.send_json(200, {
+            'ok': True,
+            'message': 'Password updated. Other devices have been signed out.'
+        }, extra_headers=[(header, value)])
 
     # ------------------------------------------------------------ handlers
 

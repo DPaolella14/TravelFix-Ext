@@ -17,20 +17,25 @@
 
 3. **Living Spaces & Accommodations**:
    - Handpicked luxury historic lodges, cloud forest eco-casitas, clifftop villas, skyline suites, and ryokans.
-   - Nightly pricing, verified amenities, high-resolution photography, guest ratings, and instant reservation simulation.
+   - Reserve a stay across consecutive nights, choosing check-in day and time, guests and room tier, with the estimate updating as you go.
+   - Note: this is a planning tool. Nothing is booked with any hotel, and inventory for locations outside the curated catalogue is generated for illustration.
 
 4. **Curated Regional Activities**:
    - Authentic excursions ranging from Incan Trail sunrise treks and high gastronomy tastings to alpine canoe expeditions and Arctic superjeep aurora chases.
    - Duration, time slots, pricing, highlights, and one-click scheduling.
 
-5. **Multi-Day Travel Plan & Itinerary Engine**:
-   - Pre-loaded with the showcase plan:
-     - **Monday — Machu Picchu**: Belmond Sanctuary Lodge + Classic Inca Trail Sun Gate Trek & Ancient Andean Culinary Tasting.
-     - **Friday — São Paulo**: Hotel Fasano Jardins + Paulista Avenue Architectural Tour & D.O.M. High Gastronomy Journey.
-   - Real-time budget breakdown (Living spaces + Activities + Transit = Grand Total).
-   - Add/remove days, assign stays, add activities, copy formatted summaries to clipboard, or print/export clean PDF itineraries.
+5. **Weekly Travel Plan & Itinerary Engine**:
+   - A plan is always a full week, Monday to Sunday, so every day is available as a target at any time.
+   - Each stay and activity carries its own time slot — presets or exact times — and days read in chronological order.
+   - Move or retime anything after the fact; a multi-night stay moves as one reservation.
+   - Live budget breakdown (stays + activities + transit), including room-tier surcharges.
 
-6. **Luxury Dark Theme & Custom Branding**:
+6. **Accounts**:
+   - Sign up with an email and password, or ask for a one-time link by email.
+   - Sessions in an HttpOnly cookie; email verification; password changes.
+   - Runs on the same port as the site with nothing to install. See [docs/BACKEND-SETUP.md](docs/BACKEND-SETUP.md).
+
+7. **Luxury Dark Theme & Custom Branding**:
    - Obsidian void black (`#060911`) palette with glowing neon cyan (`#00f2fe`) and aurora emerald accents.
    - Bespoke vector logo featuring an orbital flight path looping through an illuminated geodesic destination compass beacon.
 
@@ -67,11 +72,11 @@ server steps up to 8081 and so on — it prints the URL it settled on.
 > built from ES modules, which browsers refuse to load over `file://`. Use the
 > server.
 
-### Signing in
+### Accounts
 
-The server includes a small passwordless sign-in API (accounts, one-time
-email links, sessions). It starts with the app — there is no separate
-backend to run, and nothing to install.
+The server includes a small account API: sign up with an email and password,
+log in with them, or ask for a one-time link by email instead. It starts with
+the app — there is no separate backend to run, and nothing to install.
 
 With no email provider configured, sign-in links are printed to the terminal
 instead of sent, so the flow is fully testable out of the box. To switch on

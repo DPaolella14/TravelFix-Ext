@@ -45,7 +45,7 @@ TF_URL=http://localhost:8090/index.html node tests/run-all.js
 | `test-stay` | Hotel reservation merged into the scheduling dialog: nights, guests, room tier, live pricing, consecutive-night blocks |
 | `test-ocean` | Ocean panel quick picks and Close Explorer |
 | `test-xss` | 10 injection vectors: chat (live + persisted), collaborators, geocoder results, generated destinations, stay dialog, plan titles, map pin labels |
-| `test-signin` | Sign-in UI: dialog, invalid address handling, following the emailed link, session across reloads, HttpOnly cookie, sign out |
+| `test-signin` | Account UI: log in / sign up tabs, password rules, reveal toggle, wrong-password handling, session persistence, HttpOnly cookie, magic link, sign out |
 | `test-smoke` | Nothing broke: normal rendering, images, map markers, 3D globe init |
 
 ## The sign-in API suite
@@ -58,10 +58,11 @@ python server.py            # terminal 1
 python tests/test_auth.py   # terminal 2
 ```
 
-49 checks: validation, account enumeration, SQL injection attempts, token
-storage and replay, expiry, superseded links, cookie flags, cross-origin
-rejection, security headers, whether `.env` is reachable over HTTP, rate
-limiting, and oversized bodies.
+83 checks: validation, password strength rules, hash storage and per-password
+salting, account enumeration, login timing equivalence, SQL injection
+attempts, token storage and replay, expiry, superseded links, password
+changes, cookie flags, cross-origin rejection, security headers, whether
+`.env` is reachable over HTTP, rate limiting, and oversized bodies.
 
 ## Using this as a ground-truth set
 

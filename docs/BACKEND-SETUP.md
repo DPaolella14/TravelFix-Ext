@@ -142,9 +142,10 @@ Everything above works on `localhost`. To let other people use it:
 
 ## What you have, and what you do not
 
-**Working:** accounts keyed to a verified email, passwordless sign-in, one-time
-links that expire in 15 minutes, sessions in an HttpOnly cookie for 30 days,
-rate limiting, and sign-out.
+**Working:** sign up with an email and password, log in with them, one-time
+emailed links as a second way in (and the way back when a password is
+forgotten), email verification, password changes, sessions in an HttpOnly
+cookie for 30 days, rate limiting, and sign-out.
 
 **Not built yet:** travel plans still live in the browser's localStorage, not
 in your account. Signing in on another device gives you an empty planner. That
@@ -156,6 +157,59 @@ possible — see `BACKEND-SCOPE.md`.
 ## Security notes
 
 Relevant if you are pointing a scanner at this.
+
+**Passwords:**
+
+- Hashed with **scrypt**, from the standard library, at N=2^15, r=8, p=1.
+  scrypt is memory-hard, so a GPU or ASIC gains far less against it than
+  against a pure-iteration function. Parameters were chosen by measuring on
+  the target machine rather than copied from a blog post:
+
+  | Algorithm | Time |
+  |---|---|
+  | scrypt N=2^14 | 78 ms |
+  | **scrypt N=2^15** | **152 ms** |
+  | pbkdf2-sha256 210k | 55 ms |
+  | pbkdf2-sha256 600k | 173 ms |
+
+  OWASP's floor for scrypt is N=2^17, which measured well over half a second
+  here. On a single-process threaded server that is a denial-of-service lever
+  as much as a defence, so this uses N=2^15 and leans on the login rate
+  limiter instead. **Raise N if this ever moves to a multi-worker
+  deployment.**
+- Every password gets its own 16-byte random salt, so two accounts with the
+  same password produce different hashes.
+- The stored format is self-describing (`scrypt$32768$8$1$salt$hash`), so
+  parameters can be raised later and old hashes still verify. Logging in with
+  an outdated hash silently upgrades it.
+- Comparison is `hmac.compare_digest`.
+- Following NIST SP 800-63B: minimum length 10, no composition rules. Forcing
+  a digit and a symbol produces `Password1!` and teaches nothing. Known-weak
+  and email-derived choices are rejected instead.
+- Failed logins are indistinguishable: unknown address, wrong password, and
+  an account with no password set all return the same 401 and the same
+  message. When the account does not exist a dummy hash is computed anyway,
+  so the response cannot be told apart with a stopwatch. A test asserts the
+  two paths stay within 3x of each other.
+- Changing a password invalidates every other session for the account.
+- A **successful** login clears the account's attempt counter. Without that,
+  someone who mistypes twice then succeeds stays one slip from lockout.
+
+**One deliberate trade-off, stated rather than hidden:**
+
+Sign-up tells you when an email is already registered. That is technically
+account enumeration. Hiding it means sign-up cannot report the one failure a
+user can act on, and the usual workaround — always claim success, then email
+the existing account instead — makes the form silently do nothing for the
+person standing in front of it.
+
+So sign-up answers honestly, and the exposure is limited by per-IP rate
+limiting. **Log in does not leak this**, which is the endpoint that matters:
+an attacker there learns nothing about which addresses exist.
+
+If you would rather close it, the change is in `handle_signup` in
+`server/app.py`: return 202 with the same body regardless, and have
+`mailer.py` send a "you already have an account" email instead.
 
 **What the server does deliberately:**
 
@@ -201,9 +255,10 @@ python server.py            # terminal 1
 python tests/test_auth.py   # terminal 2
 ```
 
-49 checks covering the happy path plus token replay, expiry, superseded
-links, enumeration, injection, CSRF, cookie flags, rate limiting, oversized
-bodies, and whether `.env` is reachable over HTTP.
+83 checks covering the happy path plus password strength rules, hash storage
+and salting, token replay, expiry, superseded links, enumeration, login
+timing, injection, CSRF, cookie flags, rate limiting, oversized bodies, and
+whether `.env` is reachable over HTTP.
 
 The browser-side flow has its own suite:
 

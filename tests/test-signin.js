@@ -1,6 +1,9 @@
-// Sign-in UI against the live API.
+// Account UI: sign up with a password, log in, magic link, sign out.
 const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./lib');
 const { execSync } = require('child_process');
+
+const EMAIL = `ui-${Date.now()}@example.com`;
+const PASSWORD = 'a-reasonably-long-passphrase';
 
 (async () => {
   const b = await chromium.launch();
@@ -8,86 +11,145 @@ const { execSync } = require('child_process');
   const p = await page(c);
   await hideMap(p);
 
-  console.log('--- signed out state ---');
-  const out = await p.evaluate(() => ({
-    btn: document.querySelector('#btn-account')?.textContent.trim(),
-    signedIn: !!document.querySelector('.account-btn.signed-in')
-  }));
-  check('navbar offers Sign in', out.btn === 'Sign in', String(out.btn));
-  check('not signed in yet', !out.signedIn);
+  console.log('--- logged out navbar ---');
+  const out = await p.evaluate(() => {
+    const btn = document.querySelector('#btn-account');
+    return {
+      text: btn?.textContent.replace(/\s+/g, ' ').trim(),
+      isCta: btn?.classList.contains('account-cta'),
+      bg: btn ? getComputedStyle(btn).backgroundImage : ''
+    };
+  });
+  check('button offers both actions', /Log in \/ Sign up/.test(out.text || ''), String(out.text));
+  check('button is the prominent filled style', out.isCta && /gradient/.test(out.bg), out.bg.slice(0, 40));
 
-  console.log('--- sign-in dialog ---');
-  await p.click('#btn-account');
+  console.log('--- dialog has both tabs ---');
+  await p.evaluate(() => document.querySelector('#btn-account').click());
   await p.waitForTimeout(500);
   const dlg = await p.evaluate(() => ({
-    hasEmail: !!document.querySelector('#signin-email'),
-    hasPassword: !!document.querySelector('input[type="password"]'),
-    note: document.querySelector('.account-note')?.textContent || ''
+    tabs: [...document.querySelectorAll('.auth-tab')].map(t => t.textContent.trim()),
+    active: document.querySelector('.auth-tab.active')?.textContent.trim(),
+    hasPassword: !!document.querySelector('#auth-password'),
+    hasMagic: !!document.querySelector('#btn-magic-link')
   }));
-  check('asks for an email', dlg.hasEmail);
-  check('no password field', !dlg.hasPassword);
-  check('warns that mail is unconfigured', /printed in the terminal/i.test(dlg.note), dlg.note.slice(0, 60));
-  await p.screenshot({ path: SP + '/signin-dialog.png' });
+  check('Log in and Sign up tabs present', dlg.tabs.join(',') === 'Log in,Sign up', dlg.tabs.join(','));
+  check('opens on Log in', dlg.active === 'Log in', String(dlg.active));
+  check('has a password field', dlg.hasPassword);
+  check('still offers the emailed link', dlg.hasMagic);
+  await p.screenshot({ path: SP + '/auth-login.png' });
 
-  console.log('--- invalid address is reported ---');
-  await p.fill('#signin-email', 'nope');
-  await p.click('#btn-send-link');
-  await p.waitForTimeout(900);
-  const err = await p.evaluate(() => {
-    const e = document.querySelector('#signin-error');
+  console.log('--- switch to Sign up ---');
+  await p.evaluate(() => document.querySelector('.auth-tab[data-mode="signup"]').click());
+  await p.waitForTimeout(400);
+  check('sign up tab active',
+    await p.evaluate(() => document.querySelector('.auth-tab.active')?.textContent.trim() === 'Sign up'));
+  await p.screenshot({ path: SP + '/auth-signup.png' });
+
+  console.log('--- weak password refused ---');
+  await p.fill('#auth-email', EMAIL);
+  await p.fill('#auth-password', 'password123');
+  await p.evaluate(() => document.querySelector('#btn-auth-submit').click());
+  await p.waitForTimeout(1200);
+  const weak = await p.evaluate(() => {
+    const e = document.querySelector('#auth-error');
     return { shown: e && !e.hidden, text: e ? e.textContent : '' };
   });
-  check('invalid email shows an inline error', err.shown, err.text);
-  check('dialog stays open on error', await p.evaluate(() => !!document.querySelector('#signin-email')));
+  check('weak password shows an inline reason', weak.shown && /commonly used/i.test(weak.text), weak.text);
 
-  console.log('--- request a real link ---');
-  await p.fill('#signin-email', 'ui-test@example.com');
-  await p.click('#btn-send-link');
-  await p.waitForTimeout(1200);
-  const inbox = await p.evaluate(() => document.body.innerText);
-  check('shows the check-console state', /Check the server console/i.test(inbox));
-  await p.screenshot({ path: SP + '/signin-sent.png' });
+  console.log('--- password reveal toggle ---');
+  const revealed = await p.evaluate(() => {
+    document.querySelector('#btn-reveal').click();
+    const t = document.querySelector('#auth-password').type;
+    document.querySelector('#btn-reveal').click();
+    return { shown: t, back: document.querySelector('#auth-password').type };
+  });
+  check('reveal shows then re-hides the password',
+    revealed.shown === 'text' && revealed.back === 'password', JSON.stringify(revealed));
 
-  console.log('--- follow the link ---');
-  const link = execSync("grep -o 'http://localhost:8080/api/auth/verify?token=[A-Za-z0-9_-]*' /tmp/tfapi.log | tail -1")
-    .toString().trim();
-  check('server printed a sign-in link', link.length > 40, link.slice(0, 50));
-
-  await p.goto(link, { waitUntil: 'load', timeout: 30000 });
+  console.log('--- sign up succeeds ---');
+  await p.fill('#auth-password', PASSWORD);
+  await p.evaluate(() => document.querySelector('#btn-auth-submit').click());
   await p.waitForTimeout(2500);
-  const inApp = await p.evaluate(() => ({
-    url: location.search,
+  const afterSignup = await p.evaluate(() => ({
+    signedIn: !!document.querySelector('.account-btn.signed-in'),
     label: document.querySelector('.account-label')?.textContent || '',
-    signedIn: !!document.querySelector('.account-btn.signed-in')
+    body: document.body.innerText
   }));
-  check('redirected back into the app', !/signin=/.test(inApp.url), inApp.url);
-  check('navbar shows the signed-in account', inApp.signedIn, String(inApp.signedIn));
-  check('shows the email', /ui-test@example\.com/.test(inApp.label), inApp.label);
+  check('signed in right after signing up', afterSignup.signedIn);
+  check('navbar shows the account', afterSignup.label.includes(EMAIL), afterSignup.label);
+  check('told where the verification link went', /server console|terminal/i.test(afterSignup.body));
+  await p.evaluate(() => document.querySelector('[data-close]')?.click());
+  await p.waitForTimeout(400);
   await hideMap(p);
-  await p.screenshot({ path: SP + '/signin-done.png' });
+  await p.screenshot({ path: SP + '/auth-signed-in.png' });
 
-  console.log('--- session survives a reload ---');
-  await p.reload({ waitUntil: 'load', timeout: 30000 });
-  await p.waitForTimeout(2500);
-  check('still signed in after reload',
+  console.log('--- unverified is shown honestly ---');
+  await p.evaluate(() => document.querySelector('#btn-account').click());
+  await p.waitForTimeout(500);
+  const menu = await p.evaluate(() => document.body.innerText);
+  check('account menu marks the email unverified', /Not verified/i.test(menu));
+  check('offers to change the password', /Change password/i.test(menu));
+
+  console.log('--- sign out, then log back in ---');
+  await p.evaluate(() => document.querySelector('#btn-signout').click());
+  await p.waitForTimeout(1500);
+  check('signed out', await p.evaluate(() => !!document.querySelector('.account-cta')));
+
+  await p.evaluate(() => document.querySelector('#btn-account').click());
+  await p.waitForTimeout(500);
+  await p.fill('#auth-email', EMAIL);
+  await p.fill('#auth-password', 'the-wrong-passphrase');
+  await p.evaluate(() => document.querySelector('#btn-auth-submit').click());
+  await p.waitForTimeout(1500);
+  const bad = await p.evaluate(() => document.querySelector('#auth-error')?.textContent || '');
+  check('wrong password is refused', /incorrect/i.test(bad), bad);
+  check('error does not say which field was wrong', !/no such|not found|unknown/i.test(bad), bad);
+
+  await p.fill('#auth-password', PASSWORD);
+  await p.evaluate(() => document.querySelector('#btn-auth-submit').click());
+  await p.waitForTimeout(2000);
+  check('correct password logs back in',
     await p.evaluate(() => !!document.querySelector('.account-btn.signed-in')));
 
-  console.log('--- cookie is invisible to scripts ---');
-  const cookieVisible = await p.evaluate(() => document.cookie.includes('tf_session'));
-  check('HttpOnly cookie unreadable from JS', !cookieVisible);
+  console.log('--- session survives a new page ---');
+  // A second page in the same context shares the cookie jar, which proves
+  // session persistence without paying to re-initialise the WebGL globe.
+  const p2 = await c.newPage();
+  await p2.goto(require('./lib').URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await p2.waitForSelector('.account-btn.signed-in', { timeout: 20000 }).catch(() => {});
+  check('still logged in on a fresh page',
+    await p2.evaluate(() => !!document.querySelector('.account-btn.signed-in')));
+  check('HttpOnly cookie unreadable from JS',
+    !(await p2.evaluate(() => document.cookie.includes('tf_session'))));
+  await p2.close();
 
-  console.log('--- sign out ---');
+  console.log('--- magic link still works ---');
   await hideMap(p);
-  await p.click('#btn-account');
-  await p.waitForTimeout(500);
-  await p.click('#btn-signout');
+  await p.evaluate(() => document.querySelector('#btn-account').click());
+  await p.waitForTimeout(400);
+  await p.evaluate(() => document.querySelector('#btn-signout').click());
   await p.waitForTimeout(1500);
-  check('back to signed out',
-    await p.evaluate(() => document.querySelector('#btn-account')?.textContent.trim() === 'Sign in'));
+  await p.evaluate(() => document.querySelector('#btn-account').click());
+  await p.waitForTimeout(400);
+  await p.fill('#auth-email', EMAIL);
+  await p.evaluate(() => document.querySelector('#btn-magic-link').click());
+  await p.waitForTimeout(1500);
+  check('link dialog shown', /Check the server console|Check your inbox/i.test(
+    await p.evaluate(() => document.body.innerText)));
 
-  // The deliberate invalid-email submission above produces an expected 400,
-  // which the browser logs as a console error. Everything else must be clean.
-  const unexpected = errs(p).filter(e => !/status of 400/.test(e));
+  const link = execSync("grep -o 'http://localhost:8080/api/auth/verify?token=[A-Za-z0-9_-]*' /tmp/tfapi.log | tail -1")
+    .toString().trim();
+  // Fresh page: the verify route redirects to '/', which re-initialises the
+  // WebGL globe, and reusing a long-lived page for that is slow under
+  // software rendering. 'commit' returns as soon as the navigation starts.
+  const p3 = await c.newPage();
+  await p3.goto(link, { waitUntil: 'commit', timeout: 60000 });
+  await p3.waitForSelector('.account-btn.signed-in', { timeout: 30000 }).catch(() => {});
+  check('emailed link logs you in',
+    await p3.evaluate(() => !!document.querySelector('.account-btn.signed-in')));
+  await p3.close();
+
+  const unexpected = errs(p).filter(e => !/status of (400|401|409)/.test(e));
   check('no unexpected page errors', unexpected.length === 0, unexpected.join(' | '));
   await b.close();
   summary();
