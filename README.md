@@ -67,6 +67,16 @@ server steps up to 8081 and so on — it prints the URL it settled on.
 > built from ES modules, which browsers refuse to load over `file://`. Use the
 > server.
 
+### Signing in
+
+The server includes a small passwordless sign-in API (accounts, one-time
+email links, sessions). It starts with the app — there is no separate
+backend to run, and nothing to install.
+
+With no email provider configured, sign-in links are printed to the terminal
+instead of sent, so the flow is fully testable out of the box. To switch on
+real email, see [docs/BACKEND-SETUP.md](docs/BACKEND-SETUP.md).
+
 ### Tests
 
 Regression tests live in `tests/` and have their own dependencies; the site
@@ -75,5 +85,6 @@ itself needs nothing installed. See [tests/README.md](tests/README.md).
 ```bash
 cd tests && npm install && npx playwright install chromium
 cd .. && python server.py &
-node tests/run-all.js
+node tests/run-all.js      # browser suites
+python tests/test_auth.py  # sign-in API, stdlib only
 ```

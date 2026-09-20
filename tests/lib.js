@@ -5,13 +5,28 @@ const SHOTS = process.env.TF_SHOTS || require('path').join(__dirname, 'screensho
 require('fs').mkdirSync(SHOTS, { recursive: true });
 const IMG = fs.readFileSync(SP + '/ph-dark.png');
 const TILE = fs.readFileSync(SP + '/ph-tile.png');
-const URL = process.env.TF_URL || 'http://localhost:8080/index.local.html';
+
+// The sandbox cannot reach cdnjs/jsdelivr/unpkg, so serve the vendored copies
+// for those requests. This lets tests run against the real index.html rather
+// than a rewritten variant, which matters because the sign-in redirect goes
+// to '/'.
+const VENDOR = require('path').join(__dirname, '..', 'vendor');
+const readVendor = f => { try { return fs.readFileSync(require('path').join(VENDOR, f)); } catch { return null; } };
+const THREE_JS = readVendor('three.min.js');
+const ORBIT_JS = readVendor('OrbitControls.js');
+const LEAFLET_JS = readVendor('leaflet/leaflet.js');
+const LEAFLET_CSS = readVendor('leaflet/leaflet.css');
+const URL = process.env.TF_URL || 'http://localhost:8080/index.html';
 
 async function ctx(b, vp = { width: 1600, height: 950 }, extra = {}) {
   const c = await b.newContext({ viewport: vp, ...extra });
   await c.route('**/*', r => {
     const u = r.request().url();
     if (u.startsWith('http://localhost')) return r.continue();
+    if (THREE_JS && /three\.min\.js/.test(u)) return r.fulfill({ status: 200, contentType: 'application/javascript', body: THREE_JS });
+    if (ORBIT_JS && /OrbitControls\.js/.test(u)) return r.fulfill({ status: 200, contentType: 'application/javascript', body: ORBIT_JS });
+    if (LEAFLET_JS && /leaflet.*\.js/.test(u)) return r.fulfill({ status: 200, contentType: 'application/javascript', body: LEAFLET_JS });
+    if (LEAFLET_CSS && /leaflet.*\.css/.test(u)) return r.fulfill({ status: 200, contentType: 'text/css', body: LEAFLET_CSS });
     if (/arcgisonline|cartocdn|tile\./.test(u)) return r.fulfill({ status: 200, contentType: 'image/png', body: TILE });
     if (/unsplash/.test(u)) return r.fulfill({ status: 200, contentType: 'image/png', body: IMG });
     if (/fonts\.g/.test(u)) return r.fulfill({ status: 200, contentType: 'text/css', body: '' });

@@ -13,6 +13,7 @@ import { TravelFixRegionalMap } from './map.js';
 import { TravelPlanner } from './planner.js';
 import { TravelFixChat } from './chat.js';
 import { TravelFixUI } from './ui.js';
+import { TravelFixAccount } from './account.js';
 
 class TravelFixApp {
   constructor() {
@@ -133,6 +134,9 @@ class TravelFixApp {
         return this.globe.toggleHotspots();
       }
     });
+
+    // 7. Sign-in (talks to the local API; degrades quietly if it is absent)
+    this.account = new TravelFixAccount();
 
     // Default to 2D Map mode view
     this.switchViewMode('map');

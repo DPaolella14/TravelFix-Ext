@@ -2324,3 +2324,118 @@ html, body {
 .item-slot-continued {
   color: var(--text-secondary);
 }
+
+/* ==========================================================================
+   ACCOUNT / SIGN-IN
+   ========================================================================== */
+
+.navbar-account-slot {
+  display: flex;
+  align-items: center;
+}
+.account-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 15px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.account-btn:hover {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+.account-btn.signed-in {
+  padding-left: 5px;
+}
+.account-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-indigo));
+  color: #04202a;
+  font-weight: 800;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.account-label {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-dialog {
+  width: 430px;
+}
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.account-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+.account-input:focus {
+  border-color: var(--accent-cyan);
+}
+.account-input::placeholder {
+  color: var(--text-muted);
+}
+.account-error {
+  font-size: 11.5px;
+  color: #fca5a5;
+  padding: 2px 0;
+}
+.account-error[hidden] {
+  display: none;
+}
+.account-note {
+  font-size: 11.5px !important;
+  color: var(--text-muted) !important;
+  line-height: 1.6;
+  border-left: 2px solid var(--border-subtle);
+  padding-left: 10px;
+  margin: 10px 0 0 !important;
+}
+.account-note code {
+  background: rgba(255, 255, 255, 0.07);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.account-email-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.account-verified {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-emerald);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+}

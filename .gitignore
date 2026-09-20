@@ -5,3 +5,11 @@ index.local.html
 # Test artifacts
 tests/node_modules/
 tests/screenshots/
+
+# Backend
+.env
+server/*.db
+server/*.db-wal
+server/*.db-shm
+server/__pycache__/
+__pycache__/
