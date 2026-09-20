@@ -46,7 +46,7 @@
 
 1. Open your terminal / PowerShell in the project directory:
    ```bash
-   cd C:\Users\dmp23\.gemini\antigravity\scratch\travelfix
+   cd TravelFix-Ext
    ```
 
 2. Start the local server:
@@ -60,4 +60,20 @@
    ```
    *(Or run `python server.py --open` to automatically open your default browser)*
 
-Alternatively, you can open `index.html` directly in modern browsers supporting ES modules.
+The port is always **8080** unless it is already taken, in which case the
+server steps up to 8081 and so on — it prints the URL it settled on.
+
+> Opening `index.html` directly as a `file://` URL will not work: the app is
+> built from ES modules, which browsers refuse to load over `file://`. Use the
+> server.
+
+### Tests
+
+Regression tests live in `tests/` and have their own dependencies; the site
+itself needs nothing installed. See [tests/README.md](tests/README.md).
+
+```bash
+cd tests && npm install && npx playwright install chromium
+cd .. && python server.py &
+node tests/run-all.js
+```

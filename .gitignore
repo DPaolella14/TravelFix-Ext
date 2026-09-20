@@ -1,3 +1,7 @@
 # Local test scaffolding (not part of the site)
 vendor/
 index.local.html
+
+# Test artifacts
+tests/node_modules/
+tests/screenshots/

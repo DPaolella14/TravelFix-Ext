@@ -1,0 +1,12 @@
+{
+  "name": "travelfix-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless regression tests for TravelFix. The site itself has no dependencies; these are scoped to this folder.",
+  "scripts": {
+    "test": "node run-all.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}
