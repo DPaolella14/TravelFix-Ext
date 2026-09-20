@@ -1287,6 +1287,17 @@ export class TravelFixUI {
     }
   }
 
+  /**
+   * True when the Trip Chat tab is the active view in the docked panel
+   * and the panel itself is not collapsed.
+   */
+  isChatPanelVisible() {
+    const panel = document.getElementById('panel-content-chat');
+    if (!panel || !panel.classList.contains('active')) return false;
+    const workspace = document.getElementById('main-workspace');
+    return !(workspace && workspace.classList.contains('panel-collapsed'));
+  }
+
   switchChatChannel(channel) {
     if (!this.chat) return;
     this.chat.setActiveChannel(channel);

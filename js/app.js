@@ -49,12 +49,11 @@ class TravelFixApp {
     // 3. Initialize Social Group & DM Chat Engine
     this.chat = new TravelFixChat({
       onMessageReceived: (channel, msg) => {
-        if (this.ui) {
-          this.ui.updateChatBadge();
-          if (!this.ui.chatModal.classList.contains('hidden')) {
-            this.ui.renderChatMessages();
-            this.ui.renderChatSidebar();
-          }
+        if (!this.ui) return;
+        this.ui.updateChatBadge();
+        // Only repaint the stream when the chat tab is actually on screen.
+        if (this.ui.isChatPanelVisible()) {
+          this.ui.renderChat();
         }
       },
       onUnreadCountChanged: (total) => {
@@ -64,7 +63,7 @@ class TravelFixApp {
       },
       onCollaboratorAdded: (collaborator) => {
         if (this.ui) {
-          this.ui.renderChatSidebar();
+          this.ui.renderChat();
         }
       }
     });

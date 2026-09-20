@@ -11,6 +11,7 @@ export class TravelFixChat {
     this.onCollaboratorAdded = onCollaboratorAdded;
     this.storageKey = 'travelfix_chat_state_v1';
 
+
     this.currentUser = {
       username: 'alex_traveler',
       name: 'Alex Morgan',
@@ -105,16 +106,34 @@ export class TravelFixChat {
     };
   }
 
+  /**
+   * Invoke a UI callback without letting a rendering error break message
+   * delivery. The chat engine owns the data; the UI is a subscriber, and a
+   * broken subscriber must not take the engine down with it.
+   */
+  emit(handlerName, ...args) {
+    const handler = this[handlerName];
+    if (typeof handler !== 'function') return;
+    try {
+      handler(...args);
+    } catch (err) {
+      console.error(`TravelFixChat: ${handlerName} handler failed`, err);
+    }
+  }
+
   saveState() {
-    localStorage.setItem(this.storageKey, JSON.stringify(this.state));
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(this.state));
+    } catch (err) {
+      // Private browsing or a full quota must not break the conversation.
+      console.warn('TravelFixChat: could not persist chat state', err);
+    }
     this.notifyUnreadCount();
   }
 
   notifyUnreadCount() {
     const totalUnread = Object.values(this.state.unreadCounts || {}).reduce((a, b) => a + b, 0);
-    if (this.onUnreadCountChanged) {
-      this.onUnreadCountChanged(totalUnread);
-    }
+    this.emit('onUnreadCountChanged', totalUnread);
   }
 
   getCollaborators() {
@@ -181,9 +200,7 @@ export class TravelFixChat {
 
     this.saveState();
 
-    if (this.onCollaboratorAdded) {
-      this.onCollaboratorAdded(newCollaborator);
-    }
+    this.emit('onCollaboratorAdded', newCollaborator);
 
     // Trigger realistic acknowledgment reply after 2.5s
     setTimeout(() => {
@@ -217,9 +234,7 @@ export class TravelFixChat {
     this.state.messages[channel].push(newMsg);
     this.saveState();
 
-    if (this.onMessageReceived) {
-      this.onMessageReceived(channel, newMsg);
-    }
+    this.emit('onMessageReceived', channel, newMsg);
 
     // Auto-respond with contextual replies if applicable
     this.triggerSmartReplies(channel, cleanText, cardData);
@@ -355,9 +370,7 @@ export class TravelFixChat {
 
     this.saveState();
 
-    if (this.onMessageReceived) {
-      this.onMessageReceived(channel, replyMsg);
-    }
+    this.emit('onMessageReceived', channel, replyMsg);
   }
 
   getFormattedTime() {
