@@ -5,6 +5,8 @@
  * interactive pins, smooth fly-to camera animations, and dynamic flight arcs.
  */
 
+import { esc } from './escape.js';
+
 export class TravelFixGlobe {
   constructor(containerElement, onSelectDestination, onAltitudeChange) {
     this.container = containerElement;
@@ -544,7 +546,7 @@ export class TravelFixGlobe {
         const dest = intersects[0].object.userData.destination;
         if (dest && this.tooltipEl) {
           const tierTag = dest.tier === 'town' ? 'Town / Pueblo' : (dest.tier === 'city' ? 'City' : 'World Hub');
-          this.tooltipEl.innerHTML = `<strong>${dest.name}</strong> <span>${dest.country} &bull; ${tierTag}</span>`;
+          this.tooltipEl.innerHTML = `<strong>${esc(dest.name)}</strong> <span>${esc(dest.country)} &bull; ${esc(tierTag)}</span>`;
           this.tooltipEl.style.left = (event.clientX + 14) + 'px';
           this.tooltipEl.style.top = (event.clientY - 12) + 'px';
           this.tooltipEl.style.display = 'block';

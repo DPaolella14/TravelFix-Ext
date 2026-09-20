@@ -6,6 +6,7 @@
  */
 
 import { UniversalSearchEngine, GLOBAL_GEO_INDEX } from './geo-search.js';
+import { esc, safeUrl } from './escape.js';
 
 export class TravelFixUI {
   constructor(options) {
@@ -412,10 +413,10 @@ export class TravelFixUI {
 
     this.searchDropdown.innerHTML = results.map(item => `
       <div class="search-result-item" data-item-id="${item.id}">
-        <img src="${item.image || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=120&q=80'}" class="search-thumb" alt="${item.name}" />
+        <img src="${safeUrl(item.image) || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=120&q=80'}" class="search-thumb" alt="${esc(item.name)}" />
         <div class="search-info">
-          <div class="search-title">${item.name}</div>
-          <div class="search-sub">${item.country || 'Global Territory'} &bull; <span class="search-tag">${item.type}</span></div>
+          <div class="search-title">${esc(item.name)}</div>
+          <div class="search-sub">${esc(item.country || 'Global Territory')} &bull; <span class="search-tag">${esc(item.type)}</span></div>
         </div>
       </div>
     `).join('');
@@ -600,12 +601,12 @@ export class TravelFixUI {
 
     this.dockedExplorerBody.innerHTML = `
       <!-- Cover Banner -->
-      <div class="explorer-hero" style="background-image: url('${dest.image}');">
+      <div class="explorer-hero" style="background-image: url('${safeUrl(dest.image)}');">
         <div class="hero-overlay"></div>
         <div class="hero-content">
           <span class="badge badge-cyan">${dest.continent || 'Global'} &bull; ${dest.tier ? dest.tier.toUpperCase() : 'DESTINATION'}</span>
-          <h2 class="explorer-hero-title">${dest.name}</h2>
-          <p class="explorer-hero-tagline">${dest.tagline || dest.country || ''}</p>
+          <h2 class="explorer-hero-title">${esc(dest.name)}</h2>
+          <p class="explorer-hero-tagline">${esc(dest.tagline || dest.country || '')}</p>
         </div>
       </div>
 
@@ -615,7 +616,7 @@ export class TravelFixUI {
           <span class="m-icon">📍</span>
           <div>
             <span class="m-lbl">Country / Region</span>
-            <span class="m-val">${dest.country}</span>
+            <span class="m-val">${esc(dest.country)}</span>
           </div>
         </div>
         <div class="metric-box">
@@ -661,8 +662,8 @@ export class TravelFixUI {
       <div class="explorer-content-sections">
         ${(this.activeTab === 'all' || this.activeTab === 'overview') ? `
           <div class="explorer-desc-box">
-            <h4>About ${dest.name}</h4>
-            <p>${dest.description}</p>
+            <h4>About ${esc(dest.name)}</h4>
+            <p>${esc(dest.description)}</p>
           </div>
         ` : ''}
 
@@ -725,13 +726,13 @@ export class TravelFixUI {
           ${stays.map(stay => `
             <div class="tf-experience-card" data-stay-id="${stay.id}">
               <div class="card-media-wrapper">
-                <img src="${stay.image}" alt="${stay.name}" class="card-media" loading="lazy" />
+                <img src="${safeUrl(stay.image)}" alt="${esc(stay.name)}" class="card-media" loading="lazy" />
                 <span class="card-rating-badge">⭐ ${stay.rating || 4.9}</span>
               </div>
               <div class="card-body">
-                <div class="card-type-tag">${stay.type}</div>
-                <h4 class="card-title">${stay.name}</h4>
-                <p class="card-desc">${stay.description}</p>
+                <div class="card-type-tag">${esc(stay.type)}</div>
+                <h4 class="card-title">${esc(stay.name)}</h4>
+                <p class="card-desc">${esc(stay.description)}</p>
                 
                 <ul class="amenities-pills">
                   ${(stay.amenities || []).slice(0, 3).map(a => `<li>${a}</li>`).join('')}
@@ -780,13 +781,13 @@ export class TravelFixUI {
           ${acts.map(act => `
             <div class="tf-experience-card" data-act-id="${act.id}">
               <div class="card-media-wrapper">
-                <img src="${act.image}" alt="${act.title}" class="card-media" loading="lazy" />
+                <img src="${safeUrl(act.image)}" alt="${esc(act.title)}" class="card-media" loading="lazy" />
                 <span class="card-rating-badge">⭐ ${act.rating || 4.95}</span>
                 <span class="card-duration-badge">⏱️ ${act.duration || '3 Hours'}</span>
               </div>
               <div class="card-body">
-                <div class="card-type-tag">${act.category || 'Excursion'} &bull; ${act.timeSlot || 'Flexible'}</div>
-                <h4 class="card-title">${act.title}</h4>
+                <div class="card-type-tag">${esc(act.category || 'Excursion')} &bull; ${esc(act.timeSlot || 'Flexible')}</div>
+                <h4 class="card-title">${esc(act.title)}</h4>
                 
                 <ul class="highlights-list">
                   ${(act.highlights || []).slice(0, 2).map(h => `<li>${h}</li>`).join('')}
@@ -858,7 +859,7 @@ export class TravelFixUI {
       <div class="quick-modal-overlay">
         <div class="quick-modal-content">
           <h3>Set Living Space for Itinerary Day</h3>
-          <p>Assign <b>${stay.name}</b> ($${stay.pricePerNight}/night) in ${dest.name}:</p>
+          <p>Assign <b>${esc(stay.name)}</b> ($${stay.pricePerNight}/night) in ${esc(dest.name)}:</p>
           <div class="day-picker-list">${optionsHtml}</div>
           <div class="quick-modal-buttons">
             <button class="btn btn-secondary btn-cancel-assign">Cancel</button>
@@ -899,7 +900,7 @@ export class TravelFixUI {
         <div class="select-day-header">
           <strong>${day.dayName}</strong> (${day.date || 'Scheduled'})
         </div>
-        <div class="select-day-dest">${day.destinationId === dest.id ? '✓ Matching Destination' : 'Will update stop to ' + dest.name}</div>
+        <div class="select-day-dest">${day.destinationId === dest.id ? '✓ Matching Destination' : 'Will update stop to ' + esc(dest.name)}</div>
       </div>
     `).join('');
 
@@ -907,7 +908,7 @@ export class TravelFixUI {
       <div class="quick-modal-overlay">
         <div class="quick-modal-content">
           <h3>Add Activity to Itinerary</h3>
-          <p>Schedule <b>${act.title}</b> ($${act.price}):</p>
+          <p>Schedule <b>${esc(act.title)}</b> ($${act.price}):</p>
           <div class="day-picker-list">${optionsHtml}</div>
           <div class="quick-modal-buttons">
             <button class="btn btn-secondary btn-cancel-assign">Cancel</button>
@@ -974,7 +975,7 @@ export class TravelFixUI {
         <div class="planner-docked-title-row">
           <div>
             <span class="badge badge-cyan">TRIP SCHEDULE</span>
-            <h3 class="docked-title">${activePlan.title || 'World Journey'}</h3>
+            <h3 class="docked-title">${esc(activePlan.title || 'World Journey')}</h3>
           </div>
           <div class="docked-budget-badge">
             <span class="b-lbl">ESTIMATED BUDGET</span>
@@ -996,7 +997,7 @@ export class TravelFixUI {
           <span class="t-lbl">Active Plan:</span>
           <select id="select-active-plan" class="plan-select-dropdown" title="Switch active itinerary">
             ${allPlans.map(p => `
-              <option value="${p.id}" ${p.id === activePlan.id ? 'selected' : ''}>${p.title}</option>
+              <option value="${esc(p.id)}" ${p.id === activePlan.id ? 'selected' : ''}>${esc(p.title)}</option>
             `).join('')}
           </select>
         </div>
@@ -1239,8 +1240,8 @@ export class TravelFixUI {
         <div class="day-content-col">
           <div class="day-content-header">
             <div>
-              <h4 class="day-dest-title">${destName} ${dest ? `<span class="dest-flag">${dest.country}</span>` : ''}</h4>
-              <div class="day-notes">${item.notes || ''}</div>
+              <h4 class="day-dest-title">${esc(destName)} ${dest ? `<span class="dest-flag">${esc(dest.country)}</span>` : ''}</h4>
+              <div class="day-notes">${esc(item.notes || '')}</div>
             </div>
             <button class="btn-remove-day" data-index="${item.index}" title="Remove this day">✕</button>
           </div>
@@ -1280,7 +1281,7 @@ export class TravelFixUI {
                   ${item.activities.map(act => `
                     <div class="act-sub-item">
                       <div class="act-sub-info">
-                        <b>${act.title}</b>
+                        <b>${esc(act.title)}</b>
                         <span>⏱️ ${act.duration || '3 Hours'}</span>
                       </div>
                       <div class="act-sub-right">
@@ -1343,9 +1344,9 @@ export class TravelFixUI {
     // 1. Render DM chips in subheader
     if (this.dockedDmSubnav) {
       this.dockedDmSubnav.innerHTML = collaborators.map(c => `
-        <button class="dm-chip-btn ${this.chat.activeChannel === c.username ? 'active' : ''}" data-channel="${c.username}">
-          <span class="dm-avatar-mini">${c.avatar || '🧑'}</span>
-          <span class="dm-username">@${c.username}</span>
+        <button class="dm-chip-btn ${this.chat.activeChannel === c.username ? 'active' : ''}" data-channel="${esc(c.username)}">
+          <span class="dm-avatar-mini">${esc(c.avatar || '🧑')}</span>
+          <span class="dm-username">@${esc(c.username)}</span>
           ${(this.chat.state.unreadCounts[c.username] || 0) > 0 ? `
             <span class="dm-unread-dot"></span>
           ` : ''}
@@ -1388,22 +1389,22 @@ export class TravelFixUI {
       if (isSys) {
         return `
           <div class="chat-sys-message">
-            <span class="sys-bubble">${msg.text}</span>
+            <span class="sys-bubble">${esc(msg.text)}</span>
           </div>
         `;
       }
 
       return `
-        <div class="chat-message-row ${isSelf ? 'msg-self' : 'msg-other'}" data-msg-id="${msg.id}">
-          <div class="msg-avatar">${msg.sender.avatar || '🧑'}</div>
+        <div class="chat-message-row ${isSelf ? 'msg-self' : 'msg-other'}" data-msg-id="${esc(msg.id)}">
+          <div class="msg-avatar">${esc(msg.sender.avatar || '🧑')}</div>
           <div class="msg-content-block">
             <div class="msg-header">
-              <span class="msg-author">${msg.sender.name}</span>
-              <span class="msg-role-tag">${msg.sender.role}</span>
-              <span class="msg-time">${msg.timestamp}</span>
+              <span class="msg-author">${esc(msg.sender.name)}</span>
+              <span class="msg-role-tag">${esc(msg.sender.role)}</span>
+              <span class="msg-time">${esc(msg.timestamp)}</span>
             </div>
             
-            ${msg.text ? `<div class="msg-bubble">${msg.text}</div>` : ''}
+            ${msg.text ? `<div class="msg-bubble">${esc(msg.text)}</div>` : ''}
 
             <!-- Render Embedded Card if present -->
             ${msg.card ? this.renderChatCard(msg.card) : ''}
@@ -1411,15 +1412,15 @@ export class TravelFixUI {
             <!-- Reaction Pills -->
             <div class="msg-reactions-row">
               ${Object.entries(msg.reactions || {}).map(([emoji, count]) => `
-                <button class="reaction-pill" data-emoji="${emoji}" data-msg-id="${msg.id}">
+                <button class="reaction-pill" data-emoji="${esc(emoji)}" data-msg-id="${esc(msg.id)}">
                   ${emoji} <small>${count}</small>
                 </button>
               `).join('')}
               <div class="quick-react-actions">
-                <button class="btn-react-add" data-emoji="❤️" data-msg-id="${msg.id}">❤️</button>
-                <button class="btn-react-add" data-emoji="👍" data-msg-id="${msg.id}">👍</button>
-                <button class="btn-react-add" data-emoji="✈️" data-msg-id="${msg.id}">✈️</button>
-                <button class="btn-react-add" data-emoji="🔥" data-msg-id="${msg.id}">🔥</button>
+                <button class="btn-react-add" data-emoji="❤️" data-msg-id="${esc(msg.id)}">❤️</button>
+                <button class="btn-react-add" data-emoji="👍" data-msg-id="${esc(msg.id)}">👍</button>
+                <button class="btn-react-add" data-emoji="✈️" data-msg-id="${esc(msg.id)}">✈️</button>
+                <button class="btn-react-add" data-emoji="🔥" data-msg-id="${esc(msg.id)}">🔥</button>
               </div>
             </div>
           </div>
@@ -1457,15 +1458,15 @@ export class TravelFixUI {
       return `
         <div class="chat-embedded-card">
           <div class="chat-card-tag">🗓️ SCHEDULED DAY</div>
-          <h4 class="chat-card-title">${card.title}</h4>
-          <div class="chat-card-stay">🏨 <b>Living Space:</b> ${card.livingSpaceName}</div>
+          <h4 class="chat-card-title">${esc(card.title)}</h4>
+          <div class="chat-card-stay">🏨 <b>Living Space:</b> ${esc(card.livingSpaceName)}</div>
           ${card.activityTitles && card.activityTitles.length ? `
-            <div class="chat-card-acts">🧭 <b>Activities:</b> ${card.activityTitles.join(' &bull; ')}</div>
+            <div class="chat-card-acts">🧭 <b>Activities:</b> ${card.activityTitles.map(esc).join(' &bull; ')}</div>
           ` : ''}
-          ${card.notes ? `<div class="chat-card-notes">"${card.notes}"</div>` : ''}
+          ${card.notes ? `<div class="chat-card-notes">"${esc(card.notes)}"</div>` : ''}
           <div class="chat-card-footer">
             ${card.destinationId ? `
-              <button class="btn btn-outline btn-xs btn-chat-card-view" data-dest-id="${card.destinationId}">
+              <button class="btn btn-outline btn-xs btn-chat-card-view" data-dest-id="${esc(card.destinationId)}">
                 🗺️ View on Map
               </button>
             ` : ''}
@@ -1479,7 +1480,7 @@ export class TravelFixUI {
       return `
         <div class="chat-embedded-card">
           <div class="chat-card-tag">🗺️ MASTER TRIP PLAN</div>
-          <h4 class="chat-card-title">${card.title}</h4>
+          <h4 class="chat-card-title">${esc(card.title)}</h4>
           <div class="chat-card-stay">📅 <b>Total Stops:</b> ${card.daysCount} Days scheduled</div>
           <div class="chat-card-footer">
             <button class="btn btn-cyan btn-xs" id="btn-jump-planner-tab">
@@ -1576,18 +1577,18 @@ export class TravelFixUI {
 
     this.bookingModalBody.innerHTML = `
       <div class="booking-dialog-container">
-        <div class="booking-left-media" style="background-image: url('${stay.image}');">
+        <div class="booking-left-media" style="background-image: url('${safeUrl(stay.image)}');">
           <div class="booking-badge-overlay">
-            <span class="badge badge-cyan">${dest.name}, ${dest.country}</span>
+            <span class="badge badge-cyan">${esc(dest.name)}, ${esc(dest.country)}</span>
             <span class="badge badge-emerald">⭐ ${stay.rating || 4.9}</span>
           </div>
-          <div class="booking-quote">"${stay.description}"</div>
+          <div class="booking-quote">"${esc(stay.description)}"</div>
         </div>
 
         <div class="booking-right-form">
           <h2 class="booking-heading">Reserve Living Space</h2>
-          <div class="booking-hotel-name">${stay.name}</div>
-          <div class="booking-hotel-type">${stay.type} &bull; ${stay.address || dest.name}</div>
+          <div class="booking-hotel-name">${esc(stay.name)}</div>
+          <div class="booking-hotel-type">${esc(stay.type)} &bull; ${esc(stay.address || dest.name)}</div>
 
           <form id="booking-form" class="booking-form">
             <div class="form-row">

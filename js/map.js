@@ -10,6 +10,7 @@
 
 import { UniversalSearchEngine, POPULAR_TRAVEL_HOTSPOTS } from './geo-search.js';
 import { DESTINATIONS } from './data.js';
+import { esc, safeUrl } from './escape.js';
 
 export class TravelFixRegionalMap {
   constructor(mapContainerId, { onSelectDestination, onSelectLivingSpace, onSelectActivity, onMapClick, onOceanClick }) {
@@ -115,7 +116,7 @@ export class TravelFixRegionalMap {
           <div class="custom-hotspot-pin">
             <div class="hotspot-pulse"></div>
             <div class="hotspot-dot"></div>
-            <div class="hotspot-title">${spot.name}</div>
+            <div class="hotspot-title">${esc(spot.name)}</div>
           </div>
         `,
         iconSize: [24, 24],
@@ -335,7 +336,7 @@ export class TravelFixRegionalMap {
         <div class="custom-click-pin">
           <div class="click-ripple"></div>
           <div class="click-core">📍</div>
-          <div class="click-bubble">${label}</div>
+          <div class="click-bubble">${esc(label)}</div>
         </div>
       `,
       iconSize: [36, 36],
@@ -371,7 +372,7 @@ export class TravelFixRegionalMap {
         <div class="custom-pin-root dest-center">
           <div class="pin-ring"></div>
           <div class="pin-core">★</div>
-          <div class="pin-label">${destination.name}</div>
+          <div class="pin-label">${esc(destination.name)}</div>
         </div>
       `,
       iconSize: [40, 40],
@@ -383,8 +384,8 @@ export class TravelFixRegionalMap {
       .bindPopup(`
         <div class="tf-popup">
           <div class="tf-popup-tag">Destination Center</div>
-          <h4>${destination.name}, ${destination.country}</h4>
-          <p>${destination.tagline || ''}</p>
+          <h4>${esc(destination.name)}, ${esc(destination.country)}</h4>
+          <p>${esc(destination.tagline || '')}</p>
         </div>
       `);
 
@@ -411,12 +412,12 @@ export class TravelFixRegionalMap {
 
         stayMarker.bindPopup(`
           <div class="tf-popup stay-popup">
-            <img src="${stay.image}" alt="${stay.name}" class="popup-thumb" />
+            <img src="${safeUrl(stay.image)}" alt="${esc(stay.name)}" class="popup-thumb" />
             <div class="tf-popup-tag">Living Space &bull; ⭐ ${stay.rating || 4.9}</div>
-            <h4>${stay.name}</h4>
-            <p class="popup-sub">${stay.type}</p>
+            <h4>${esc(stay.name)}</h4>
+            <p class="popup-sub">${esc(stay.type)}</p>
             <div class="popup-price"><b>$${stay.pricePerNight}</b> <small>/ night</small></div>
-            <button class="popup-btn popup-btn-book" data-stay-id="${stay.id}">Book / Add to Day</button>
+            <button class="popup-btn popup-btn-book" data-stay-id="${esc(stay.id)}">Book / Add to Day</button>
           </div>
         `);
       });
@@ -445,11 +446,11 @@ export class TravelFixRegionalMap {
 
         actMarker.bindPopup(`
           <div class="tf-popup act-popup">
-            <img src="${act.image}" alt="${act.title}" class="popup-thumb" />
+            <img src="${safeUrl(act.image)}" alt="${esc(act.title)}" class="popup-thumb" />
             <div class="tf-popup-tag">Activity &bull; ⏱️ ${act.duration || '3 Hours'}</div>
-            <h4>${act.title}</h4>
+            <h4>${esc(act.title)}</h4>
             <div class="popup-price"><b>$${act.price}</b> <small>/ person</small></div>
-            <button class="popup-btn popup-btn-act" data-act-id="${act.id}">Add to Trip Plan</button>
+            <button class="popup-btn popup-btn-act" data-act-id="${esc(act.id)}">Add to Trip Plan</button>
           </div>
         `);
       });
