@@ -48,6 +48,7 @@ TF_URL=http://localhost:8090/index.html node tests/run-all.js
 | `test-xss` | 10 injection vectors: chat (live + persisted), collaborators, geocoder results, generated destinations, stay dialog, plan titles, map pin labels |
 | `test-signin` | Account UI: log in / sign up tabs, password rules, reveal toggle, wrong-password handling, session persistence, HttpOnly cookie, magic link, sign out |
 | `test-invites` | Invite dialog, invite link opened signed out, sign up and join, editor edits reach the owner, viewer edits are put back (needs `TF_SERVER_LOG`) |
+| `test-account` | Account menu: download my data as a dated JSON file, delete-account dialog (typed address, wrong password refused, signed out afterwards) |
 | `test-plansync` | Server-side plans across two browser contexts: upload on first sign-in, a plan made on one device appears on the other, edits and deletes sync, sign-out returns to local plans |
 | `test-smoke` | Nothing broke: normal rendering, images, map markers, 3D globe init |
 
@@ -112,6 +113,14 @@ cannot send or accept, expired and revoked links are refused exactly like
 made-up ones, editors can edit but not invite, viewers can only read, and
 every invite endpoint gives a non-member the same 404 as a plan that does not
 exist. It writes to the database directly, so use a throwaway one.
+
+`tests/test_account.py` covers data export and account deletion, run the same
+way (`TF_DB` and `TF_SERVER_LOG`): the export holds the account, its plans and
+invites but no hashes; deletion needs the typed address and the password;
+afterwards the account cannot sign in, its owned plans are gone for the
+people they were shared with, it is gone from other people's plans, and its
+address appears neither in the database nor in the raw bytes of the file.
+`tests/test-account.js` drives the account menu's download and delete.
 
 `tests/test-invites.js` drives the real UI in three browsers: the owner sends
 an invite from the dialog, the invitee opens the link signed out, signs up

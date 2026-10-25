@@ -29,6 +29,9 @@ Endpoints
     DELETE /api/plans/<id>/invites/<invite>   revoke (owner)
     POST   /api/invites/accept                { token } -> join the plan
 
+    GET    /api/account/export    everything stored about you, as a JSON download
+    POST   /api/account/delete    { confirmEmail, password } -> erase the account
+
 Every plan route needs a session. A plan the caller is not a member of
 answers 404, exactly as a plan that does not exist does.
 """
@@ -40,6 +43,7 @@ import os
 import re
 import socketserver
 import sys
+import time
 import urllib.parse
 import webbrowser
 
@@ -187,6 +191,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         if parsed.path == '/api/auth/me':
             return self.handle_me()
+        if parsed.path == '/api/account/export':
+            return self.handle_export()
         if parsed.path == '/api/auth/verify':
             return self.handle_verify(parsed.query)
         if parsed.path == '/api/plans':
@@ -268,6 +274,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_create_plan()
         if parsed.path == '/api/invites/accept':
             return self.handle_accept_invite()
+        if parsed.path == '/api/account/delete':
+            return self.handle_delete_account()
         match = PLAN_SUB_PATH.match(parsed.path)
         if match and match.group(2) == 'invites':
             return self.handle_create_invite(int(match.group(1)))
@@ -505,6 +513,93 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             'user': self.user_payload(row),
             'mailConfigured': MAIL_ENABLED,
         })
+
+    # ------------------------------------------------------------- account
+
+    def handle_export(self):
+        row = self.require_user()
+        if row is None:
+            return
+        data = db.export_user(row['user_id'])
+        if data is None:
+            return self.send_json(401, {'error': 'not_signed_in'})
+
+        user = data['user']
+        invite_status = lambda i: ('accepted' if i['accepted_at'] else
+                                   'revoked' if i['revoked_at'] else
+                                   'expired' if i['expires_at'] < db.now() else 'open')
+        export = {
+            'format': 'travelfix-export-v1',
+            'exportedAt': db.now(),
+            'account': {
+                'email': user['email'],
+                'displayName': user['display_name'],
+                'createdAt': user['created_at'],
+                'emailVerifiedAt': user['email_verified_at'],
+                'hasPassword': bool(user['has_password']),
+                'passwordSetAt': user['password_set_at'],
+            },
+            'plans': [{**self.plan_payload(p), 'createdAt': p['created_at']} for p in data['plans']],
+            'invitesSent': [{
+                'planId': str(i['plan_id']), 'email': i['email_normalised'], 'role': i['role'],
+                'createdAt': i['created_at'], 'expiresAt': i['expires_at'], 'status': invite_status(i),
+            } for i in data['invites_sent']],
+            'invitesReceived': [{
+                'planId': str(i['plan_id']), 'role': i['role'],
+                'createdAt': i['created_at'], 'expiresAt': i['expires_at'], 'status': invite_status(i),
+            } for i in data['invites_received']],
+            'sessions': [{
+                'createdAt': s['created_at'], 'expiresAt': s['expires_at'], 'userAgent': s['user_agent'],
+            } for s in data['sessions']],
+            'signInLinks': [{
+                'createdAt': t['created_at'], 'expiresAt': t['expires_at'],
+                'used': bool(t['consumed_at']), 'requestIp': t['request_ip'],
+            } for t in data['login_tokens']],
+        }
+        stamp = time.strftime('%Y-%m-%d', time.gmtime())
+        return self.send_json(200, export, extra_headers=[
+            ('Content-Disposition', f'attachment; filename="travelfix-export-{stamp}.json"'),
+        ])
+
+    def handle_delete_account(self):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+        row = self.require_user()
+        if row is None:
+            return
+        payload = self.read_json()
+        if not isinstance(payload, dict):
+            return self.send_json(400, {'error': 'bad_request'})
+
+        # Typing the address is the confirmation that this is deliberate, for
+        # every account. A password, where there is one, proves it is the
+        # owner at the keyboard and not someone holding an open session.
+        email_normalised = auth.normalise_email(row['email'])
+        confirm = payload.get('confirmEmail')
+        if not isinstance(confirm, str) or auth.normalise_email(confirm.strip()) != email_normalised:
+            return self.send_json(400, {
+                'error': 'confirm_mismatch',
+                'message': 'Type your email address exactly to confirm.'
+            })
+        if row['password_hash']:
+            if not auth.check_login_limits(self.client_ip(), email_normalised):
+                return self.send_json(429, {
+                    'error': 'rate_limited',
+                    'message': 'Too many attempts. Wait a few minutes and try again.'
+                })
+            password = payload.get('password')
+            if not isinstance(password, str) or not passwords.verify_password(password, row['password_hash']):
+                return self.send_json(403, {
+                    'error': 'wrong_password',
+                    'message': 'That password is not correct.'
+                })
+
+        db.delete_user(row['user_id'], email_normalised)
+        header, value = self.cookie_header('', 0)
+        return self.send_json(200, {
+            'ok': True,
+            'message': 'Your account and everything stored with it has been deleted.'
+        }, extra_headers=[(header, value)])
 
     def handle_logout(self):
         if not self.same_origin():
