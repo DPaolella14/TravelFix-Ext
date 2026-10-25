@@ -47,6 +47,7 @@ TF_URL=http://localhost:8090/index.html node tests/run-all.js
 | `test-ocean` | Ocean panel quick picks and Close Explorer |
 | `test-xss` | 10 injection vectors: chat (live + persisted), collaborators, geocoder results, generated destinations, stay dialog, plan titles, map pin labels |
 | `test-signin` | Account UI: log in / sign up tabs, password rules, reveal toggle, wrong-password handling, session persistence, HttpOnly cookie, magic link, sign out |
+| `test-plansync` | Server-side plans across two browser contexts: upload on first sign-in, a plan made on one device appears on the other, edits and deletes sync, sign-out returns to local plans |
 | `test-smoke` | Nothing broke: normal rendering, images, map markers, 3D globe init |
 
 ## The sign-in API suite
@@ -64,6 +65,23 @@ salting, account enumeration, login timing equivalence, SQL injection
 attempts, token storage and replay, expiry, superseded links, password
 changes, cookie flags, cross-origin rejection, security headers, whether
 `.env` is reachable over HTTP, rate limiting, and oversized bodies.
+
+## The plans API suite
+
+`tests/test_plans.py` covers `/api/plans`, run the same way as the sign-in
+suite:
+
+```bash
+python server.py             # terminal 1
+python tests/test_plans.py   # terminal 2
+```
+
+47 checks: sign-in required, owner create/read/update/delete, persistence
+across a second login, and, for every endpoint, that a non-member gets the
+same 404 as for a plan that does not exist. Also validation, oversized bodies,
+malformed ids and cross-origin rejection. It creates three accounts, so on a
+server that has already run `test_auth.py` it can hit the per-IP signup limit;
+restart the server between the two.
 
 ## Using this as a ground-truth set
 

@@ -90,6 +90,15 @@ export class TravelPlanner {
     this.activeIdStorageKey = 'travelfix_active_plan_id_v6';
     this.dynamicDestinations = new Map();
 
+    // Signed in, the server is the source of truth and localStorage keeps
+    // only this browser's own signed-out plans. remoteUser is the email the
+    // plans belong to; synced maps each server plan id to the body last
+    // saved, so only plans that actually changed are sent.
+    this.remoteUser = null;
+    this.synced = null;
+    this.pushTimer = null;
+    this.pushing = Promise.resolve();
+
     this.plans = this.loadAllPlans();
     this.activePlanId = this.loadActivePlanId();
     this.plan = this.getActivePlan();
@@ -134,17 +143,153 @@ export class TravelPlanner {
   }
 
   saveAll() {
-    const serialized = this.plans.map(p => ({
-      ...p,
-      customDestinations: Array.from(this.dynamicDestinations.values())
-    }));
-    try {
-      localStorage.setItem(this.plansStorageKey, JSON.stringify(serialized));
-      localStorage.setItem(this.activeIdStorageKey, this.activePlanId);
-    } catch (err) {
-      console.warn('TravelPlanner: could not save plans', err);
+    if (this.remoteUser) {
+      try {
+        localStorage.setItem(this.activeIdStorageKey, this.activePlanId);
+      } catch (err) { /* ignore */ }
+      this.schedulePush();
+    } else {
+      const serialized = this.plans.map(p => this.serialisePlan(p));
+      try {
+        localStorage.setItem(this.plansStorageKey, JSON.stringify(serialized));
+        localStorage.setItem(this.activeIdStorageKey, this.activePlanId);
+      } catch (err) {
+        console.warn('TravelPlanner: could not save plans', err);
+      }
     }
     if (this.onChange) this.onChange(this.plan);
+  }
+
+  serialisePlan(plan) {
+    return {
+      ...plan,
+      customDestinations: Array.from(this.dynamicDestinations.values())
+    };
+  }
+
+  // ------------------------------------------------------------ server sync
+
+  async request(path, method = 'GET', body) {
+    const res = await fetch(path, {
+      method,
+      credentials: 'same-origin',
+      headers: body ? { 'Content-Type': 'application/json' } : { 'Accept': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, ok: res.ok, data };
+  }
+
+  /**
+   * Called whenever the signed-in user changes. Signing in loads the
+   * account's plans from the server; the first time an account is used, the
+   * plans already in this browser are uploaded into it so nothing is lost.
+   * Signing out goes back to this browser's own plans.
+   */
+  async useAccount(user) {
+    const email = user ? user.email : null;
+    if (email === this.remoteUser) return false;
+
+    // Back to this browser's own plans first, so one account's plans can
+    // never be uploaded into the next account to sign in here.
+    if (this.remoteUser) {
+      this.remoteUser = null;
+      this.synced = null;
+      clearTimeout(this.pushTimer);
+      this.plans = this.loadAllPlans();
+      this.activePlanId = this.loadActivePlanId();
+      this.plan = this.getActivePlan();
+      if (!email && this.onChange) this.onChange(this.plan);
+    }
+    if (!email) return true;
+
+    let rows;
+    try {
+      const res = await this.request('/api/plans');
+      if (!res.ok) throw new Error(`GET /api/plans answered ${res.status}`);
+      rows = res.data.plans || [];
+
+      if (rows.length === 0) {
+        const worthKeeping = this.plans.filter(p => p.days.length > 0 || p.title !== 'My Travel Plan');
+        const toUpload = worthKeeping.length ? worthKeeping : [this.createBlankPlanObject('My Travel Plan')];
+        for (const plan of toUpload) {
+          const created = await this.request('/api/plans', 'POST', this.planBody(plan));
+          if (!created.ok) throw new Error(`POST /api/plans answered ${created.status}`);
+          if (plan.id === this.activePlanId) this.activePlanId = created.data.plan.id;
+          rows.push(created.data.plan);
+        }
+      }
+    } catch (err) {
+      // Leave the local plans in place rather than showing an empty planner.
+      console.warn('TravelPlanner: could not load plans from the server', err);
+      return false;
+    }
+
+    this.remoteUser = email;
+    this.synced = new Map();
+    this.plans = rows.map(row => {
+      (row.plan.customDestinations || []).forEach(d => this.dynamicDestinations.set(d.id, d));
+      const plan = this.normalisePlan(row.plan);
+      this.synced.set(plan.id, JSON.stringify(this.planBody(plan)));
+      return plan;
+    });
+    if (!this.plans.some(p => p.id === this.activePlanId)) {
+      this.activePlanId = this.loadActivePlanId();
+    }
+    this.plan = this.getActivePlan();
+    if (this.onChange) this.onChange(this.plan);
+    return true;
+  }
+
+  planBody(plan) {
+    const { id, title, ...rest } = this.serialisePlan(plan);
+    return { title: title || 'Untitled plan', plan: rest };
+  }
+
+  schedulePush() {
+    clearTimeout(this.pushTimer);
+    this.pushTimer = setTimeout(() => {
+      this.pushing = this.pushing.then(() => this.pushChanges());
+    }, 400);
+  }
+
+  /** Send creates, edits and deletes made since the last push. */
+  async pushChanges() {
+    if (!this.remoteUser || !this.synced) return;
+    const user = this.remoteUser;
+    try {
+      const liveIds = new Set(this.plans.map(p => p.id));
+      for (const id of Array.from(this.synced.keys())) {
+        if (liveIds.has(id)) continue;
+        const res = await this.request(`/api/plans/${encodeURIComponent(id)}`, 'DELETE');
+        if (res.ok || res.status === 404) this.synced.delete(id);
+      }
+
+      for (const plan of this.plans) {
+        if (user !== this.remoteUser) return;
+        const body = this.planBody(plan);
+        const snapshot = JSON.stringify(body);
+
+        if (!this.synced.has(plan.id)) {
+          // Created in this tab: the server assigns the real id.
+          const res = await this.request('/api/plans', 'POST', body);
+          if (!res.ok) throw new Error(`POST /api/plans answered ${res.status}`);
+          const localId = plan.id;
+          plan.id = res.data.plan.id;
+          if (this.activePlanId === localId) this.activePlanId = plan.id;
+          this.synced.set(plan.id, snapshot);
+          continue;
+        }
+
+        if (this.synced.get(plan.id) === snapshot) continue;
+        const res = await this.request(`/api/plans/${encodeURIComponent(plan.id)}`, 'PUT', body);
+        if (!res.ok) throw new Error(`PUT /api/plans/${plan.id} answered ${res.status}`);
+        this.synced.set(plan.id, snapshot);
+      }
+    } catch (err) {
+      // Unsent changes stay unsynced and go with the next save.
+      console.warn('TravelPlanner: could not save plans to the server', err);
+    }
   }
 
   savePlan() {
