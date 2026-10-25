@@ -221,14 +221,13 @@ collaboration specifically.
 
 ## Current state, for reference
 
-Steps 1 and 2 are built: accounts, and plans stored server-side with
-membership-scoped queries (see `BACKEND-SETUP.md`). Invites and chat are not,
-and the app is honest about that:
+Steps 1 to 3 are built: accounts, plans stored server-side with
+membership-scoped queries, and email invites to a plan (see
+`BACKEND-SETUP.md`). Chat is not, and the app is honest about that:
 
 - `js/chat.js` exports `CHAT_IS_LOCAL_ONLY = true` and seeds nothing.
-- `chat.canInvite()` returns `false`, and the invite button explains why
-  rather than collecting an address it cannot use.
 - The chat empty state says notes stay in this browser.
 
-When the backend lands, `CHAT_IS_LOCAL_ONLY` flips to `false` and the invite
-path becomes real. That flag is the seam.
+When messages are stored server-side, `CHAT_IS_LOCAL_ONLY` flips to `false`
+and chat reaches the same plan members invites already add. That flag is
+the seam.

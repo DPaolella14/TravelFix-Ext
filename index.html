@@ -225,51 +225,41 @@
 
     </main>
 
-    <!-- User Invitation Modal (@username) -->
+    <!-- Plan invitation by email -->
     <div id="invite-modal" class="tf-modal-overlay hidden" style="z-index: 1000;">
       <div class="planner-modal-dialog" style="max-width: 520px;">
         <div class="planner-modal-header">
-          <div class="planner-modal-title">Invite Co-Traveler to Trip</div>
+          <div class="planner-modal-title">Invite someone to this plan</div>
           <button id="btn-close-invite" class="btn-close-icon" title="Close">&times;</button>
         </div>
         <div class="invite-modal-body">
           <p class="invite-modal-desc">
-            Invite friends, family, or travel companions by their <b>@username</b> to coordinate schedules, vote on activities, and chat in real time.
+            They get an email with a link to <b id="invite-plan-title">this plan</b>.
+            The link works once, only for an account with that address, and
+            expires in 7 days.
           </p>
           <form id="form-invite-user" class="invite-form">
             <div class="form-group">
-              <label for="invite-username">Username:</label>
-              <div class="input-prefix-wrapper">
-                <span class="input-prefix">@</span>
-                <input 
-                  type="text" 
-                  id="invite-username" 
-                  placeholder="e.g. sarah_wanderlust" 
-                  required 
-                  autocomplete="off"
-                />
-              </div>
-            </div>
-            <div class="form-group">
-              <label for="invite-fullname">Full Name (Optional):</label>
-              <input 
-                type="text" 
-                id="invite-fullname" 
-                placeholder="e.g. Sarah Chen" 
+              <label for="invite-email">Their email address:</label>
+              <input
+                type="email"
+                id="invite-email"
+                placeholder="e.g. sarah@example.com"
+                required
                 autocomplete="off"
               />
             </div>
             <div class="form-group">
-              <label for="invite-role">Trip Permission Role:</label>
+              <label for="invite-role">What they can do:</label>
               <select id="invite-role" class="form-select">
-                <option value="Co-Planner">Co-Planner (Can edit days & suggest activities)</option>
-                <option value="Traveler">Traveler (Can view plan & participate in chat)</option>
-                <option value="Local Specialist">Local Guide / Specialist</option>
+                <option value="editor">Co-Planner (can change the plan)</option>
+                <option value="viewer">Traveler (can see the plan)</option>
               </select>
             </div>
+            <p id="invite-error" class="invite-error" role="alert" hidden></p>
             <div class="form-actions-row">
               <button type="button" id="btn-cancel-invite" class="btn-secondary">Cancel</button>
-              <button type="submit" class="btn-primary">Send Invite & Open Chat 💬</button>
+              <button type="submit" id="btn-send-invite" class="btn-primary">Send invite</button>
             </div>
           </form>
         </div>

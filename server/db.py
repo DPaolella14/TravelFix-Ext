@@ -75,6 +75,25 @@ CREATE TABLE IF NOT EXISTS plan_members (
     PRIMARY KEY (plan_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_plan_members_user ON plan_members(user_id);
+
+-- Invitations to a plan. As with login tokens, only the SHA-256 of the
+-- token is stored: a leaked row is not a working key to someone's trip.
+-- The role is fixed here, when the invite is made, and accepting cannot
+-- change it.
+CREATE TABLE IF NOT EXISTS invites (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id     INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    email_normalised TEXT NOT NULL,
+    token_hash  TEXT    NOT NULL UNIQUE,
+    role        TEXT    NOT NULL CHECK (role IN ('editor', 'viewer')),
+    invited_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    accepted_at INTEGER,
+    accepted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    revoked_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_invites_plan ON invites(plan_id);
 """
 
 
@@ -319,6 +338,127 @@ def delete_plan_for(plan_id, user_id):
     )
     conn.commit()
     return cur.rowcount == 1
+
+
+def leave_plan(plan_id, user_id):
+    """A member who is not the owner removes themselves. Returns True if they left."""
+    conn = connect()
+    cur = conn.execute(
+        "DELETE FROM plan_members WHERE plan_id = ? AND user_id = ? AND role != 'owner'",
+        (plan_id, user_id)
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def list_members_for(plan_id, user_id):
+    """Everyone on a plan, or [] if the caller is not on it."""
+    return connect().execute(
+        'SELECT u.email, u.display_name, m.role, m.joined_at FROM plan_members m'
+        ' JOIN users u ON u.id = m.user_id'
+        ' WHERE m.plan_id = ?'
+        '   AND EXISTS (SELECT 1 FROM plan_members me WHERE me.plan_id = ? AND me.user_id = ?)'
+        ' ORDER BY m.joined_at, u.id',
+        (plan_id, plan_id, user_id)
+    ).fetchall()
+
+
+# ---------------------------------------------------------------- invites
+#
+# Creating, listing and revoking go through the caller's membership like
+# every other plan query. Accepting is the one path that starts from a
+# token rather than a plan, and it is what grants the membership.
+
+def count_pending_invites(plan_id):
+    return connect().execute(
+        'SELECT COUNT(*) FROM invites WHERE plan_id = ?'
+        ' AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?',
+        (plan_id, now())
+    ).fetchone()[0]
+
+
+def is_member_email(plan_id, email_normalised):
+    return connect().execute(
+        'SELECT 1 FROM plan_members m JOIN users u ON u.id = m.user_id'
+        ' WHERE m.plan_id = ? AND u.email_normalised = ?',
+        (plan_id, email_normalised)
+    ).fetchone() is not None
+
+
+def create_invite(plan_id, email_normalised, token_hash, role, invited_by, expires_at):
+    conn = connect()
+    cur = conn.execute(
+        'INSERT INTO invites (plan_id, email_normalised, token_hash, role, invited_by,'
+        ' created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (plan_id, email_normalised, token_hash, role, invited_by, now(), expires_at)
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_pending_invites_for(plan_id, user_id):
+    """Outstanding invites on a plan the caller owns, or []."""
+    return connect().execute(
+        'SELECT i.id, i.email_normalised, i.role, i.created_at, i.expires_at FROM invites i'
+        ' WHERE i.plan_id = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL'
+        '   AND i.expires_at > ?'
+        "   AND EXISTS (SELECT 1 FROM plan_members m WHERE m.plan_id = i.plan_id"
+        "               AND m.user_id = ? AND m.role = 'owner')"
+        ' ORDER BY i.created_at, i.id',
+        (plan_id, now(), user_id)
+    ).fetchall()
+
+
+def revoke_invite_for(plan_id, invite_id, user_id):
+    """Only the plan's owner can revoke. Returns True if an open invite was revoked."""
+    conn = connect()
+    cur = conn.execute(
+        'UPDATE invites SET revoked_at = ?'
+        ' WHERE id = ? AND plan_id = ? AND accepted_at IS NULL AND revoked_at IS NULL'
+        "   AND EXISTS (SELECT 1 FROM plan_members m WHERE m.plan_id = invites.plan_id"
+        "               AND m.user_id = ? AND m.role = 'owner')",
+        (now(), invite_id, plan_id, user_id)
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def find_open_invite(token_hash):
+    """An invite that can still be accepted, or None."""
+    return connect().execute(
+        'SELECT * FROM invites WHERE token_hash = ?'
+        ' AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?',
+        (token_hash, now())
+    ).fetchone()
+
+
+def accept_invite(invite_id, user_id):
+    """
+    Consume the invite and add the member, together or not at all.
+
+    The UPDATE's WHERE clause is the single-use guarantee: of two requests
+    racing with the same token, exactly one changes the row. Someone who is
+    already on the plan keeps the role they have; an invite never demotes an
+    owner or promotes past what it was created with.
+    Returns the role granted, or None if the invite was no longer open.
+    """
+    conn = connect()
+    ts = now()
+    with conn:
+        cur = conn.execute(
+            'UPDATE invites SET accepted_at = ?, accepted_by = ?'
+            ' WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?',
+            (ts, user_id, invite_id, ts)
+        )
+        if cur.rowcount != 1:
+            return None
+        row = conn.execute('SELECT plan_id, role FROM invites WHERE id = ?', (invite_id,)).fetchone()
+        conn.execute(
+            'INSERT OR IGNORE INTO plan_members (plan_id, user_id, role, joined_at)'
+            ' VALUES (?, ?, ?, ?)',
+            (row['plan_id'], user_id, row['role'], ts)
+        )
+    return row['role']
 
 
 def purge_expired():

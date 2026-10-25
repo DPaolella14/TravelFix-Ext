@@ -96,6 +96,7 @@ export class TravelPlanner {
     // saved, so only plans that actually changed are sent.
     this.remoteUser = null;
     this.synced = null;
+    this.roles = null;
     this.pushTimer = null;
     this.pushing = Promise.resolve();
 
@@ -195,6 +196,7 @@ export class TravelPlanner {
     if (this.remoteUser) {
       this.remoteUser = null;
       this.synced = null;
+      this.roles = null;
       clearTimeout(this.pushTimer);
       this.plans = this.loadAllPlans();
       this.activePlanId = this.loadActivePlanId();
@@ -226,19 +228,66 @@ export class TravelPlanner {
     }
 
     this.remoteUser = email;
+    this.applyServerPlans(rows);
+    return true;
+  }
+
+  /** Replace the plan list with the server's, remembering each plan's role. */
+  applyServerPlans(rows, preferId = null) {
     this.synced = new Map();
+    this.roles = new Map();
     this.plans = rows.map(row => {
       (row.plan.customDestinations || []).forEach(d => this.dynamicDestinations.set(d.id, d));
       const plan = this.normalisePlan(row.plan);
       this.synced.set(plan.id, JSON.stringify(this.planBody(plan)));
+      this.roles.set(plan.id, row.role);
       return plan;
     });
-    if (!this.plans.some(p => p.id === this.activePlanId)) {
+    if (preferId && this.plans.some(p => p.id === preferId)) {
+      this.activePlanId = preferId;
+    } else if (!this.plans.some(p => p.id === this.activePlanId)) {
       this.activePlanId = this.loadActivePlanId();
     }
     this.plan = this.getActivePlan();
     if (this.onChange) this.onChange(this.plan);
+  }
+
+  /** Reload from the server, e.g. after joining a plan. Unsent edits go first. */
+  async reloadFromServer(preferId = null) {
+    if (!this.remoteUser) return false;
+    clearTimeout(this.pushTimer);
+    await (this.pushing = this.pushing.then(() => this.pushChanges()));
+    const res = await this.request('/api/plans');
+    if (!res.ok) return false;
+    this.applyServerPlans(res.data.plans || [], preferId);
     return true;
+  }
+
+  /** 'owner', 'editor' or 'viewer' for a server plan; null for a local one. */
+  roleOf(planId = this.activePlanId) {
+    return (this.roles && this.roles.get(planId)) || null;
+  }
+
+  /**
+   * Why the active plan cannot be shared right now, or null if it can.
+   * The server makes the final call (it also requires a verified address).
+   */
+  inviteBlocker() {
+    if (!this.remoteUser) return 'signed_out';
+    if (!this.synced || !this.synced.has(this.plan.id)) return 'not_saved';
+    if (this.roleOf() !== 'owner') return 'not_owner';
+    return null;
+  }
+
+  async invite(email, role) {
+    return this.request(`/api/plans/${encodeURIComponent(this.plan.id)}/invites`, 'POST', { email, role });
+  }
+
+  /** Accept an invite token; on success the joined plan becomes the active one. */
+  async acceptInvite(token) {
+    const res = await this.request('/api/invites/accept', 'POST', { token });
+    if (res.ok) await this.reloadFromServer(res.data.plan.id);
+    return res;
   }
 
   planBody(plan) {
@@ -282,6 +331,15 @@ export class TravelPlanner {
         }
 
         if (this.synced.get(plan.id) === snapshot) continue;
+        if (this.roleOf(plan.id) === 'viewer') {
+          // The server would refuse it; put the plan back rather than show
+          // edits that will never be saved.
+          const saved = JSON.parse(this.synced.get(plan.id));
+          Object.assign(plan, this.normalisePlan({ ...saved.plan, id: plan.id, title: saved.title }));
+          if (this.onNotice) this.onNotice('You can view this plan but not change it.');
+          if (this.onChange && plan === this.plan) this.onChange(this.plan);
+          continue;
+        }
         const res = await this.request(`/api/plans/${encodeURIComponent(plan.id)}`, 'PUT', body);
         if (!res.ok) throw new Error(`PUT /api/plans/${plan.id} answered ${res.status}`);
         this.synced.set(plan.id, snapshot);

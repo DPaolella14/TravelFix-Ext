@@ -68,21 +68,93 @@ def send_login_link(to_email, link, ttl_minutes=15):
     Returns (sent, detail). sent is False when mail is not configured or the
     provider rejected it; detail is for the server log, never for the client.
     """
+    return _deliver(
+        to_email,
+        subject='Your TravelFix sign-in link',
+        html=_build_html(link, ttl_minutes),
+        text=_build_text(link, ttl_minutes),
+        console_label='Sign-in link',
+        console_hint='Paste it into your browser to finish signing in.',
+        link=link,
+    )
+
+
+ROLE_WORDS = {
+    'editor': 'plan it with them',
+    'viewer': 'see the plan',
+}
+
+
+def _build_invite_html(link, inviter, plan_title, role, ttl_days):
+    safe_link = _escape(link)
+    return f"""<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f5f7fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+    <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px;">
+      <h1 style="margin:0 0 8px;font-size:20px;color:#0b111e;">You're invited to a trip</h1>
+      <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#475569;">
+        {_escape(inviter)} invited you to {ROLE_WORDS[role]} on TravelFix:
+        <b>{_escape(plan_title)}</b>.
+      </p>
+      <a href="{safe_link}"
+         style="display:inline-block;background:#0891b2;color:#ffffff;text-decoration:none;
+                padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px;">
+        Open the trip
+      </a>
+      <p style="margin:24px 0 0;font-size:12px;line-height:1.6;color:#94a3b8;">
+        If the button does not work, paste this into your browser:<br>
+        <span style="word-break:break-all;">{safe_link}</span>
+      </p>
+      <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:#94a3b8;">
+        The link works once, only for an account with this email address, and
+        expires in {ttl_days} days. If you were not expecting this, ignore it.
+      </p>
+    </div>
+  </body>
+</html>"""
+
+
+def _build_invite_text(link, inviter, plan_title, role, ttl_days):
+    return (
+        f'{inviter} invited you to {ROLE_WORDS[role]} on TravelFix: {plan_title}\n\n'
+        f'{link}\n\n'
+        f'The link works once, only for an account with this email address, and\n'
+        f'expires in {ttl_days} days. If you were not expecting this, ignore it.\n'
+    )
+
+
+def send_invite(to_email, link, inviter, plan_title, role, ttl_days=7):
+    """
+    Same contract as send_login_link. The plan title is the inviter's text,
+    so it is escaped in the HTML body and kept out of the subject line.
+    """
+    return _deliver(
+        to_email,
+        subject=f'{inviter} invited you to a trip on TravelFix',
+        html=_build_invite_html(link, inviter, plan_title, role, ttl_days),
+        text=_build_invite_text(link, inviter, plan_title, role, ttl_days),
+        console_label='Invite link',
+        console_hint='Open it while signed in as that address to join the plan.',
+        link=link,
+    )
+
+
+def _deliver(to_email, subject, html, text, console_label, console_hint, link):
     if not MAIL_ENABLED:
         print('=' * 70)
         print('[TravelFix] Email is not configured (no RESEND_API_KEY).')
-        print(f'[TravelFix] Sign-in link for {to_email}:')
+        print(f'[TravelFix] {console_label} for {to_email}:')
         print(f'[TravelFix] {link}')
-        print('[TravelFix] Paste it into your browser to finish signing in.')
+        print(f'[TravelFix] {console_hint}')
         print('=' * 70, flush=True)
         return False, 'mail-disabled'
 
     payload = json.dumps({
         'from': MAIL_FROM,
         'to': [to_email],
-        'subject': 'Your TravelFix sign-in link',
-        'html': _build_html(link, ttl_minutes),
-        'text': _build_text(link, ttl_minutes),
+        'subject': subject,
+        'html': html,
+        'text': text,
     }).encode('utf-8')
 
     request = urllib.request.Request(

@@ -137,15 +137,78 @@ class TravelFixApp {
 
     // 7. Sign-in (talks to the local API; degrades quietly if it is absent)
     // Signed in, plans come from the server; signed out, from this browser.
+    this.pendingInvite = this.takeInviteFromUrl();
+    this.planner.onNotice = (message) => { if (this.ui) this.ui.showToast(message, 'info'); };
     this.account = new TravelFixAccount({
       onChange: async (user) => {
         const changed = await this.planner.useAccount(user);
         if (changed && this.ui) this.ui.renderPlanner();
+        await this.acceptPendingInvite(user);
       }
     });
 
     // Default to 2D Map mode view
     this.switchViewMode('map');
+  }
+
+  /**
+   * An invite link arrives as /?invite=<token>. The token is a credential,
+   * so it comes out of the address bar (and so out of history and any
+   * Referer) at once, and is held for this tab until someone signed in can
+   * accept it.
+   */
+  takeInviteFromUrl() {
+    const key = 'travelfix_pending_invite';
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get('invite');
+    if (fromUrl) {
+      params.delete('invite');
+      const query = params.toString();
+      window.history.replaceState({}, '', window.location.pathname + (query ? '?' + query : ''));
+      try { sessionStorage.setItem(key, fromUrl); } catch (err) { /* this tab only */ }
+      return fromUrl;
+    }
+    try { return sessionStorage.getItem(key); } catch (err) { return null; }
+  }
+
+  forgetPendingInvite() {
+    this.pendingInvite = null;
+    try { sessionStorage.removeItem('travelfix_pending_invite'); } catch (err) { /* ignore */ }
+  }
+
+  async acceptPendingInvite(user) {
+    if (!this.pendingInvite || this.acceptingInvite) return;
+    const toast = (message, type) => { if (this.ui) this.ui.showToast(message, type); };
+
+    if (!user) {
+      if (!this.invitePromptShown && !this.account.apiUnavailable) {
+        this.invitePromptShown = true;
+        toast('Log in or sign up with the address the invite was sent to, and you will join the plan.', 'info');
+        this.account.openAuthDialog('signup');
+      }
+      return;
+    }
+
+    this.acceptingInvite = true;
+    try {
+      const res = await this.planner.acceptInvite(this.pendingInvite);
+      if (res.ok) {
+        this.forgetPendingInvite();
+        if (this.ui) this.ui.renderPlanner();
+        toast(`You joined "${res.data.plan.title}"`, 'success');
+      } else if (res.status === 403) {
+        // Wrong account or address not verified yet: the invite is still
+        // good, so keep it for when that is put right.
+        toast(res.data.message || 'This invite cannot be accepted by this account.', 'error');
+      } else if (res.status !== 401) {
+        this.forgetPendingInvite();
+        toast(res.data.message || 'That invite could not be accepted.', 'error');
+      }
+    } catch (err) {
+      toast('Could not reach the server to accept the invite.', 'error');
+    } finally {
+      this.acceptingInvite = false;
+    }
   }
 
   handleSelectDestination(destination) {

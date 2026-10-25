@@ -1785,40 +1785,55 @@ export class TravelFixUI {
   // ==========================================
 
   openInviteModal() {
-    // Inviting someone means sending them something, which needs a server.
-    // Rather than collect an address and quietly drop it, say so plainly.
-    if (this.chat && !this.chat.canInvite()) {
-      this.showInviteUnavailable();
+    // Inviting someone shares a saved plan with them, so it needs an
+    // account and a plan the server holds. Rather than collect an address
+    // and fail later, say up front what is missing.
+    const blocker = this.planner.inviteBlocker();
+    if (blocker) {
+      this.showInviteUnavailable(blocker);
       return;
     }
+    const title = document.getElementById('invite-plan-title');
+    if (title) title.textContent = this.planner.plan.title || 'this plan';
+    this.setInviteError('');
     this.inviteModal.classList.remove('hidden');
-    const input = document.getElementById('invite-username');
+    const input = document.getElementById('invite-email');
     if (input) {
       input.value = '';
       setTimeout(() => input.focus(), 100);
     }
   }
 
-  showInviteUnavailable() {
+  setInviteError(message) {
+    const el = document.getElementById('invite-error');
+    if (!el) return;
+    el.textContent = message;
+    el.hidden = !message;
+  }
+
+  showInviteUnavailable(reason) {
+    const copy = {
+      signed_out: {
+        title: 'Sign in to invite people',
+        body: `Invites share a plan saved in your account. Log in or sign up,
+          and the plans in this browser move into your account.`,
+      },
+      not_saved: {
+        title: 'Saving this plan\u2026',
+        body: 'It has not reached your account yet. Try again in a moment.',
+      },
+      not_owner: {
+        title: "Only the plan's owner can invite people",
+        body: 'This plan was shared with you. Ask its owner to send the invite.',
+      },
+    }[reason] || { title: "Invites aren't available", body: '' };
+
     const container = document.createElement('div');
     container.innerHTML = `
       <div class="quick-modal-overlay tf-schedule-overlay">
         <div class="quick-modal-content schedule-dialog">
-          <h3>Invites aren't available yet</h3>
-          <p>
-            Inviting someone by email means sending them a real message and
-            giving them a real account, and this build has no server to do
-            either. Anything typed here would go nowhere.
-          </p>
-          <p>
-            What it needs \u2014 accounts, a database, a mail provider and a
-            realtime connection so messages actually travel between people
-            \u2014 is written up in <b>docs/BACKEND-SCOPE.md</b> in this repo.
-          </p>
-          <p class="invite-local-note">
-            Until then, Trip Chat is a private scratchpad: what you write
-            stays in this browser and nobody else can see it.
-          </p>
+          <h3>${esc(copy.title)}</h3>
+          <p>${esc(copy.body)}</p>
           <div class="quick-modal-buttons">
             <button type="button" class="btn btn-primary btn-sched-cancel">Got it</button>
           </div>
@@ -1836,11 +1851,28 @@ export class TravelFixUI {
     this.inviteModal.classList.add('hidden');
   }
 
-  handleInviteUserSubmit() {
-    // Retained so the form cannot silently appear to succeed if it is ever
-    // reachable again. Real invitations are blocked until there is a backend.
-    this.closeInviteModal();
-    this.showInviteUnavailable();
+  async handleInviteUserSubmit() {
+    const email = (document.getElementById('invite-email')?.value || '').trim();
+    const role = document.getElementById('invite-role')?.value || 'viewer';
+    const button = document.getElementById('btn-send-invite');
+    if (button) button.disabled = true;
+    this.setInviteError('');
+    try {
+      const res = await this.planner.invite(email, role);
+      if (!res.ok) {
+        this.setInviteError(res.data.message || 'The invite could not be sent.');
+        return;
+      }
+      this.closeInviteModal();
+      this.showToast(res.data.delivery === 'email'
+        ? `Invite sent to ${email}`
+        : `Invite created for ${email}. Email is not set up, so the link is in the server console.`,
+        'success');
+    } catch (err) {
+      this.setInviteError('Could not reach the server. Check your connection and try again.');
+    } finally {
+      if (button) button.disabled = false;
+    }
   }
 
   // ==========================================

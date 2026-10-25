@@ -30,7 +30,9 @@ const { chromium, ctx, page, hideMap, errs, check, summary, SP } = require('./li
   await p.evaluate(()=>document.getElementById('btn-docked-invite').click());
   await p.waitForTimeout(700);
   const inv=await p.evaluate(()=>document.body.innerText);
-  check('invite explains it needs a backend', /aren.t available yet/i.test(inv) && /BACKEND-SCOPE/.test(inv));
+  // Signed out, inviting needs an account; the dialog says so instead of
+  // collecting an address. (tests/test-invites.js covers signed-in invites.)
+  check('invite explains it needs an account', /Sign in to invite people/.test(inv), inv.slice(0, 200));
   check('no success claim', !/invited @|invite sent/i.test(inv));
   await p.screenshot({path:SP+'/chat-invite.png'});
 

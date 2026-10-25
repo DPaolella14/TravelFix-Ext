@@ -21,7 +21,13 @@ Endpoints
     POST   /api/plans             { title, plan } -> new plan, caller is owner
     GET    /api/plans/<id>        one plan
     PUT    /api/plans/<id>        { title, plan } -> owner or editor
-    DELETE /api/plans/<id>        owner only
+    DELETE /api/plans/<id>        owner deletes it; anyone else leaves it
+
+    GET    /api/plans/<id>/members            who is on the plan
+    GET    /api/plans/<id>/invites            open invites (owner)
+    POST   /api/plans/<id>/invites            { email, role } (owner)
+    DELETE /api/plans/<id>/invites/<invite>   revoke (owner)
+    POST   /api/invites/accept                { token } -> join the plan
 
 Every plan route needs a session. A plan the caller is not a member of
 answers 404, exactly as a plan that does not exist does.
@@ -58,6 +64,14 @@ MAX_PLANS_PER_USER = 100
 MAX_PLAN_TITLE = 200
 
 PLAN_PATH = re.compile(r'^/api/plans/([1-9][0-9]{0,17})$')
+PLAN_SUB_PATH = re.compile(r'^/api/plans/([1-9][0-9]{0,17})/(members|invites)$')
+INVITE_PATH = re.compile(r'^/api/plans/([1-9][0-9]{0,17})/invites/([1-9][0-9]{0,17})$')
+
+INVITE_TTL_SECONDS = 7 * 24 * 60 * 60
+INVITE_ROLES = ('editor', 'viewer')
+MAX_OPEN_INVITES_PER_PLAN = 50
+INVITES_PER_USER_PER_HOUR = 20
+INVITE_ACCEPTS_PER_IP_PER_HOUR = 30
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -180,6 +194,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         match = PLAN_PATH.match(parsed.path)
         if match:
             return self.handle_get_plan(int(match.group(1)))
+        match = PLAN_SUB_PATH.match(parsed.path)
+        if match and match.group(2) == 'members':
+            return self.handle_list_members(int(match.group(1)))
+        if match and match.group(2) == 'invites':
+            return self.handle_list_invites(int(match.group(1)))
         if parsed.path.startswith('/api/'):
             return self.send_json(404, {'error': 'not_found'})
         return self.serve_static(super().do_GET)
@@ -247,6 +266,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_logout()
         if parsed.path == '/api/plans':
             return self.handle_create_plan()
+        if parsed.path == '/api/invites/accept':
+            return self.handle_accept_invite()
+        match = PLAN_SUB_PATH.match(parsed.path)
+        if match and match.group(2) == 'invites':
+            return self.handle_create_invite(int(match.group(1)))
         return self.send_json(404, {'error': 'not_found'})
 
     def do_PUT(self):
@@ -256,9 +280,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return self.send_json(404, {'error': 'not_found'})
 
     def do_DELETE(self):
-        match = PLAN_PATH.match(urllib.parse.urlsplit(self.path).path)
+        path = urllib.parse.urlsplit(self.path).path
+        match = PLAN_PATH.match(path)
         if match:
             return self.handle_delete_plan(int(match.group(1)))
+        match = INVITE_PATH.match(path)
+        if match:
+            return self.handle_revoke_invite(int(match.group(1)), int(match.group(2)))
         return self.send_json(404, {'error': 'not_found'})
 
     # --------------------------------------------------- password accounts
@@ -616,10 +644,184 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if current is None:
             return self.plan_not_found()
         if current['role'] != 'owner':
-            return self.send_json(403, {'error': 'owner_only'})
+            # Someone the plan was shared with removes it from their own
+            # list; the plan itself is the owner's to delete.
+            if not db.leave_plan(plan_id, row['user_id']):
+                return self.plan_not_found()
+            return self.send_json(200, {'ok': True, 'left': True})
         if not db.delete_plan_for(plan_id, row['user_id']):
             return self.plan_not_found()
         return self.send_json(200, {'ok': True})
+
+    # ------------------------------------------------------------- invites
+
+    def invite_payload(self, row):
+        return {
+            'id': str(row['id']),
+            'email': row['email_normalised'],
+            'role': row['role'],
+            'createdAt': row['created_at'],
+            'expiresAt': row['expires_at'],
+        }
+
+    def handle_list_members(self, plan_id):
+        row = self.require_user()
+        if row is None:
+            return
+        members = db.list_members_for(plan_id, row['user_id'])
+        if not members:
+            return self.plan_not_found()
+        return self.send_json(200, {'members': [
+            {'email': m['email'], 'displayName': m['display_name'], 'role': m['role']}
+            for m in members
+        ]})
+
+    def handle_list_invites(self, plan_id):
+        row = self.require_user()
+        if row is None:
+            return
+        current = db.get_plan_for(plan_id, row['user_id'])
+        if current is None:
+            return self.plan_not_found()
+        if current['role'] != 'owner':
+            return self.send_json(403, {'error': 'owner_only'})
+        invites = db.list_pending_invites_for(plan_id, row['user_id'])
+        return self.send_json(200, {'invites': [self.invite_payload(i) for i in invites]})
+
+    def handle_create_invite(self, plan_id):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+        row = self.require_user()
+        if row is None:
+            return
+        # Membership before anything else, so a non-member learns nothing
+        # from how their request would otherwise have been answered.
+        current = db.get_plan_for(plan_id, row['user_id'])
+        if current is None:
+            return self.plan_not_found()
+        if current['role'] != 'owner':
+            return self.send_json(403, {
+                'error': 'owner_only',
+                'message': "Only the plan's owner can invite people."
+            })
+        if not row['email_verified_at']:
+            # An unverified account could be anyone's throwaway; letting it
+            # send mail from this domain is how a sender gets marked as spam.
+            return self.send_json(403, {
+                'error': 'verify_first',
+                'message': 'Verify your email address before inviting people.'
+            })
+
+        payload = self.read_json()
+        if not isinstance(payload, dict):
+            return self.send_json(400, {'error': 'bad_request'})
+        email = payload.get('email')
+        role = payload.get('role')
+        if not isinstance(email, str) or not auth.is_valid_email(email.strip()):
+            return self.send_json(400, {
+                'error': 'invalid_email',
+                'message': 'That does not look like an email address.'
+            })
+        if role not in INVITE_ROLES:
+            return self.send_json(400, {'error': 'invalid_role'})
+
+        invitee = auth.normalise_email(email.strip())
+        if invitee == auth.normalise_email(row['email']) or db.is_member_email(plan_id, invitee):
+            return self.send_json(409, {
+                'error': 'already_member',
+                'message': 'That person is already on this plan.'
+            })
+        if db.count_pending_invites(plan_id) >= MAX_OPEN_INVITES_PER_PLAN:
+            return self.send_json(409, {
+                'error': 'too_many_invites',
+                'message': f'A plan can have up to {MAX_OPEN_INVITES_PER_PLAN} open invites.'
+            })
+        user_ok = auth.limiter.check(f'invite-user:{row["user_id"]}', INVITES_PER_USER_PER_HOUR, 3600)
+        ip_ok = auth.limiter.check(f'invite-ip:{self.client_ip()}', INVITES_PER_USER_PER_HOUR, 3600)
+        if not (user_ok and ip_ok):
+            return self.send_json(429, {
+                'error': 'rate_limited',
+                'message': 'Too many invites sent. Try again in a little while.'
+            })
+
+        # 32 bytes from the OS CSPRNG; only its SHA-256 is stored.
+        raw_token = auth.new_token()
+        invite_id = db.create_invite(
+            plan_id=plan_id,
+            email_normalised=invitee,
+            token_hash=auth.hash_token(raw_token),
+            role=role,
+            invited_by=row['user_id'],
+            expires_at=db.now() + INVITE_TTL_SECONDS,
+        )
+        link = f'{BASE_URL}/?invite={urllib.parse.quote(raw_token)}'
+        sent, _ = mailer.send_invite(invitee, link, row['display_name'] or row['email'],
+                                     current['title'], role, INVITE_TTL_SECONDS // 86400)
+
+        invite = next(i for i in db.list_pending_invites_for(plan_id, row['user_id'])
+                      if i['id'] == invite_id)
+        return self.send_json(201, {
+            'invite': self.invite_payload(invite),
+            'delivery': 'email' if sent else 'console',
+        })
+
+    def handle_revoke_invite(self, plan_id, invite_id):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+        row = self.require_user()
+        if row is None:
+            return
+        current = db.get_plan_for(plan_id, row['user_id'])
+        if current is None:
+            return self.plan_not_found()
+        if current['role'] != 'owner':
+            return self.send_json(403, {'error': 'owner_only'})
+        if not db.revoke_invite_for(plan_id, invite_id, row['user_id']):
+            return self.plan_not_found()
+        return self.send_json(200, {'ok': True})
+
+    def handle_accept_invite(self):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+        row = self.require_user()
+        if row is None:
+            return
+        if not auth.limiter.check(f'invite-accept-ip:{self.client_ip()}',
+                                  INVITE_ACCEPTS_PER_IP_PER_HOUR, 3600):
+            return self.send_json(429, {'error': 'rate_limited'})
+
+        payload = self.read_json()
+        token = payload.get('token') if isinstance(payload, dict) else None
+        # Unknown, expired, revoked and already-used tokens all get the same
+        # answer, so the response says nothing about which it was.
+        invalid = (404, {
+            'error': 'invite_invalid',
+            'message': 'That invite has expired, was already used, or was withdrawn.'
+        })
+        if not isinstance(token, str) or not token or len(token) > 512:
+            return self.send_json(*invalid)
+        invite = db.find_open_invite(auth.hash_token(token))
+        if invite is None:
+            return self.send_json(*invalid)
+
+        # The link alone is not enough: it may have been forwarded. It only
+        # works for a verified account with the address it was sent to.
+        if auth.normalise_email(row['email']) != invite['email_normalised']:
+            return self.send_json(403, {
+                'error': 'wrong_account',
+                'message': 'This invite was sent to a different email address. '
+                           'Sign in with that address to accept it.'
+            })
+        if not row['email_verified_at']:
+            return self.send_json(403, {
+                'error': 'verify_first',
+                'message': 'Verify your email address, then open the invite link again.'
+            })
+
+        if db.accept_invite(invite['id'], row['user_id']) is None:
+            return self.send_json(*invalid)
+        plan = db.get_plan_for(invite['plan_id'], row['user_id'])
+        return self.send_json(200, {'plan': self.plan_payload(plan)})
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
