@@ -221,13 +221,13 @@ collaboration specifically.
 
 ## Current state, for reference
 
-Steps 1 to 3 are built: accounts, plans stored server-side with
-membership-scoped queries, and email invites to a plan (see
-`BACKEND-SETUP.md`). Chat is not, and the app is honest about that:
+Steps 1 to 4 are built: accounts, plans stored server-side with
+membership-scoped queries, email invites to a plan, and chat persisted per
+plan and fetched by polling (see `BACKEND-SETUP.md`). `CHAT_IS_LOCAL_ONLY` is
+now `false`: the chat follows the active plan, and only falls back to
+browser-only notes when there is no shared plan to talk about, which its
+empty state says.
 
-- `js/chat.js` exports `CHAT_IS_LOCAL_ONLY = true` and seeds nothing.
-- The chat empty state says notes stay in this browser.
-
-When messages are stored server-side, `CHAT_IS_LOCAL_ONLY` flips to `false`
-and chat reaches the same plan members invites already add. That flag is
-the seam.
+Step 5, swapping polling for Server-Sent Events or WebSockets, is not done.
+Polling every 3 seconds is the honest starting point this document
+recommends; change it if the latency actually bothers anyone.

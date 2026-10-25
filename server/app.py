@@ -29,6 +29,9 @@ Endpoints
     DELETE /api/plans/<id>/invites/<invite>   revoke (owner)
     POST   /api/invites/accept                { token } -> join the plan
 
+    GET    /api/plans/<id>/messages?after=<id>  chat messages newer than <id>
+    POST   /api/plans/<id>/messages             { text, card } (any member)
+
     GET    /api/account/export    everything stored about you, as a JSON download
     POST   /api/account/delete    { confirmEmail, password } -> erase the account
 
@@ -68,7 +71,7 @@ MAX_PLANS_PER_USER = 100
 MAX_PLAN_TITLE = 200
 
 PLAN_PATH = re.compile(r'^/api/plans/([1-9][0-9]{0,17})$')
-PLAN_SUB_PATH = re.compile(r'^/api/plans/([1-9][0-9]{0,17})/(members|invites)$')
+PLAN_SUB_PATH = re.compile(r'^/api/plans/([1-9][0-9]{0,17})/(members|invites|messages)$')
 INVITE_PATH = re.compile(r'^/api/plans/([1-9][0-9]{0,17})/invites/([1-9][0-9]{0,17})$')
 
 INVITE_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -76,6 +79,17 @@ INVITE_ROLES = ('editor', 'viewer')
 MAX_OPEN_INVITES_PER_PLAN = 50
 INVITES_PER_USER_PER_HOUR = 20
 INVITE_ACCEPTS_PER_IP_PER_HOUR = 30
+
+MAX_MESSAGE_CHARS = 2000
+MESSAGES_PER_USER_PER_MINUTE = 30
+MESSAGE_PAGE = 200
+# Control characters (other than newline and tab) and the Unicode bidi
+# controls that can make text render in a different order than it was
+# written. Neither has any business in a chat message.
+UNSAFE_CHARS = re.compile('[\x00-\x08\x0b-\x1f\x7f\u202a-\u202e\u2066-\u2069\u200e\u200f]')
+DESTINATION_ID = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+CARD_SHORT = 200
+CARD_LIST = 30
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -205,6 +219,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_list_members(int(match.group(1)))
         if match and match.group(2) == 'invites':
             return self.handle_list_invites(int(match.group(1)))
+        if match and match.group(2) == 'messages':
+            return self.handle_list_messages(int(match.group(1)), parsed.query)
         if parsed.path.startswith('/api/'):
             return self.send_json(404, {'error': 'not_found'})
         return self.serve_static(super().do_GET)
@@ -279,6 +295,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         match = PLAN_SUB_PATH.match(parsed.path)
         if match and match.group(2) == 'invites':
             return self.handle_create_invite(int(match.group(1)))
+        if match and match.group(2) == 'messages':
+            return self.handle_create_message(int(match.group(1)))
         return self.send_json(404, {'error': 'not_found'})
 
     def do_PUT(self):
@@ -514,6 +532,130 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             'mailConfigured': MAIL_ENABLED,
         })
 
+    # ---------------------------------------------------------------- chat
+
+    def clean_text(self, value, limit):
+        """A string with unsafe characters removed, or None if it is not a string or too long."""
+        if not isinstance(value, str):
+            return None
+        value = UNSAFE_CHARS.sub('', value).strip()
+        return value if len(value) <= limit else None
+
+    def clean_card(self, card):
+        """
+        A shared itinerary card reduced to the fields each type has, with
+        their types and lengths checked. Returns (card, error). The client
+        escapes everything it renders; this is the second line, so that what
+        is stored is only ever the shape the client expects.
+        """
+        if card is None:
+            return None, None
+        if not isinstance(card, dict):
+            return None, 'card must be an object'
+        kind = card.get('type')
+        out = {'type': kind}
+        if kind == 'day_card':
+            for key in ('title', 'livingSpaceName', 'notes'):
+                value = self.clean_text(card.get(key, ''), CARD_SHORT if key != 'notes' else MAX_MESSAGE_CHARS)
+                if value is None:
+                    return None, f'card {key} is not valid'
+                out[key] = value
+            dest = card.get('destinationId')
+            if dest is not None and (not isinstance(dest, str) or not DESTINATION_ID.match(dest)):
+                return None, 'card destinationId is not valid'
+            out['destinationId'] = dest
+            titles = card.get('activityTitles', [])
+            if not isinstance(titles, list) or len(titles) > CARD_LIST:
+                return None, 'card activityTitles is not valid'
+            out['activityTitles'] = []
+            for title in titles:
+                value = self.clean_text(title, CARD_SHORT)
+                if value is None:
+                    return None, 'card activityTitles is not valid'
+                out['activityTitles'].append(value)
+        elif kind == 'plan_summary':
+            for key in ('title', 'startDate'):
+                value = self.clean_text(card.get(key, ''), CARD_SHORT)
+                if value is None:
+                    return None, f'card {key} is not valid'
+                out[key] = value
+            for key in ('daysCount', 'totalEstimate'):
+                value = card.get(key, 0)
+                if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                        or value != value or not (0 <= value <= 10 ** 9):
+                    return None, f'card {key} is not valid'
+                out[key] = value
+        else:
+            return None, 'card type is not valid'
+        return out, None
+
+    def message_payload(self, row, viewer_id):
+        return {
+            'id': str(row['id']),
+            'text': row['body'],
+            'card': json.loads(row['card_json']) if row['card_json'] else None,
+            'createdAt': row['created_at'],
+            'author': {
+                'email': row['email'],
+                'displayName': row['display_name'],
+                'role': row['role'],  # None once they have left the plan
+                'self': row['author_id'] == viewer_id,
+            },
+        }
+
+    def handle_list_messages(self, plan_id, query):
+        row = self.require_user()
+        if row is None:
+            return
+        after = (urllib.parse.parse_qs(query).get('after') or ['0'])[0]
+        if not after.isdigit() or len(after) > 18:
+            return self.send_json(400, {'error': 'bad_request'})
+        messages = db.list_messages_for(plan_id, row['user_id'], int(after), MESSAGE_PAGE)
+        if messages is None:
+            return self.plan_not_found()
+        return self.send_json(200, {
+            'messages': [self.message_payload(m, row['user_id']) for m in messages],
+        })
+
+    def handle_create_message(self, plan_id):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+        row = self.require_user()
+        if row is None:
+            return
+        # Membership first, so a non-member learns nothing from validation.
+        if db.get_plan_for(plan_id, row['user_id']) is None:
+            return self.plan_not_found()
+
+        payload = self.read_json()
+        if not isinstance(payload, dict):
+            return self.send_json(400, {'error': 'bad_request'})
+        text = self.clean_text(payload.get('text', ''), MAX_MESSAGE_CHARS)
+        if text is None:
+            return self.send_json(400, {
+                'error': 'invalid_text',
+                'message': f'A message can be up to {MAX_MESSAGE_CHARS} characters.'
+            })
+        card, problem = self.clean_card(payload.get('card'))
+        if problem:
+            return self.send_json(400, {'error': 'invalid_card', 'message': problem})
+        if not text and card is None:
+            return self.send_json(400, {'error': 'empty_message'})
+
+        if not auth.limiter.check(f'chat-user:{row["user_id"]}', MESSAGES_PER_USER_PER_MINUTE, 60):
+            return self.send_json(429, {
+                'error': 'rate_limited',
+                'message': 'You are sending messages very fast. Wait a moment.'
+            })
+
+        message_id = db.create_message_for(
+            plan_id, row['user_id'], text,
+            json.dumps(card, separators=(',', ':')) if card else None)
+        if message_id is None:
+            return self.plan_not_found()
+        created = db.list_messages_for(plan_id, row['user_id'], message_id - 1, 1)
+        return self.send_json(201, {'message': self.message_payload(created[0], row['user_id'])})
+
     # ------------------------------------------------------------- account
 
     def handle_export(self):
@@ -551,6 +693,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             'sessions': [{
                 'createdAt': s['created_at'], 'expiresAt': s['expires_at'], 'userAgent': s['user_agent'],
             } for s in data['sessions']],
+            'messages': [{
+                'planId': str(m['plan_id']), 'text': m['body'],
+                'card': json.loads(m['card_json']) if m['card_json'] else None,
+                'createdAt': m['created_at'],
+            } for m in data['messages']],
             'signInLinks': [{
                 'createdAt': t['created_at'], 'expiresAt': t['expires_at'],
                 'used': bool(t['consumed_at']), 'requestIp': t['request_ip'],

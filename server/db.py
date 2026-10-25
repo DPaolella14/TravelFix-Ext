@@ -94,6 +94,18 @@ CREATE TABLE IF NOT EXISTS invites (
     revoked_at  INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_invites_plan ON invites(plan_id);
+
+-- Trip chat. A message belongs to a plan and is visible to its members.
+-- Deleting the plan or the author's account deletes the message.
+CREATE TABLE IF NOT EXISTS messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id     INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    author_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body        TEXT    NOT NULL,
+    card_json   TEXT,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_plan ON messages(plan_id, id);
 """
 
 
@@ -464,6 +476,41 @@ def accept_invite(invite_id, user_id):
     return row['role']
 
 
+# --------------------------------------------------------------- messages
+#
+# Both functions take the caller's user id and go through plan_members, the
+# same as every plan query: a non-member gets nothing back and writes nothing.
+
+def list_messages_for(plan_id, user_id, after_id=0, limit=200):
+    """Messages after after_id, oldest first, or None if the caller is not a member."""
+    conn = connect()
+    if conn.execute('SELECT 1 FROM plan_members WHERE plan_id = ? AND user_id = ?',
+                    (plan_id, user_id)).fetchone() is None:
+        return None
+    return conn.execute(
+        'SELECT m.id, m.author_id, m.body, m.card_json, m.created_at,'
+        ' u.email, u.display_name, pm.role'
+        ' FROM messages m JOIN users u ON u.id = m.author_id'
+        ' LEFT JOIN plan_members pm ON pm.plan_id = m.plan_id AND pm.user_id = m.author_id'
+        ' WHERE m.plan_id = ? AND m.id > ?'
+        ' ORDER BY m.id LIMIT ?',
+        (plan_id, after_id, limit)
+    ).fetchall()
+
+
+def create_message_for(plan_id, user_id, body, card_json):
+    """Returns the new message id, or None if the caller is not a member."""
+    conn = connect()
+    cur = conn.execute(
+        'INSERT INTO messages (plan_id, author_id, body, card_json, created_at)'
+        ' SELECT ?, ?, ?, ?, ? WHERE EXISTS'
+        ' (SELECT 1 FROM plan_members WHERE plan_id = ? AND user_id = ?)',
+        (plan_id, user_id, body, card_json, now(), plan_id, user_id)
+    )
+    conn.commit()
+    return cur.lastrowid if cur.rowcount == 1 else None
+
+
 # ----------------------------------------------------- export and erasure
 
 def export_user(user_id):
@@ -490,6 +537,10 @@ def export_user(user_id):
         'sessions': conn.execute(
             'SELECT created_at, expires_at, user_agent FROM sessions WHERE user_id = ? ORDER BY id',
             (user_id,)
+        ).fetchall(),
+        'messages': conn.execute(
+            'SELECT plan_id, body, card_json, created_at FROM messages'
+            ' WHERE author_id = ? ORDER BY id', (user_id,)
         ).fetchall(),
         'login_tokens': conn.execute(
             'SELECT created_at, expires_at, consumed_at, request_ip FROM login_tokens'

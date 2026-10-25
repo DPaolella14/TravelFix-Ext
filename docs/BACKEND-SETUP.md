@@ -182,7 +182,8 @@ the same as sign-in links.
 
 - **Download my data** (`GET /api/account/export`) saves a JSON file with
   everything stored about the account: the account itself, every plan it is
-  on with that plan's contents, invites it sent and invites addressed to it,
+  on with that plan's contents, the chat messages it wrote, invites it sent
+  and invites addressed to it,
   and its sessions and sign-in history (times, browser, requesting IP). It
   never includes password or token hashes.
 - **Delete account** (`POST /api/account/delete`) asks for the email address
@@ -198,7 +199,21 @@ the same as sign-in links.
   configured, the server console prints each link with its address, so
   saved server output needs the same treatment.
 
-**Not built yet:** group chat. See `BACKEND-SCOPE.md`.
+**Trip chat.** Signed in, on a plan saved to the account, the chat tab is that
+plan's conversation: everyone the plan is shared with, whatever their role,
+reads and writes it. New messages are fetched every 3 seconds. Signed out, or
+on a plan that only exists in the browser, the chat is a private notepad kept
+in localStorage, and says so.
+
+Messages go through plan membership like everything else, so a non-member
+gets 404. The server checks what a message may contain before storing it:
+text up to 2,000 characters with control and bidirectional-override
+characters removed, and shared itinerary cards reduced to the fields each
+card type has, with their types and lengths checked and destination ids held
+to a strict pattern. Markup is stored as typed; the browser escapes
+everything it renders. Messages are rate limited per account, deleted with
+their plan, and deleted with their author's account. Reactions stay in the
+browser that made them.
 
 ---
 

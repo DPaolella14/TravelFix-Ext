@@ -327,6 +327,8 @@ export class TravelPlanner {
           plan.id = res.data.plan.id;
           if (this.activePlanId === localId) this.activePlanId = plan.id;
           this.synced.set(plan.id, snapshot);
+          this.roles.set(plan.id, 'owner');
+          if (this.onChange && plan === this.plan) this.onChange(this.plan);
           continue;
         }
 
