@@ -2178,10 +2178,10 @@ html, body {
   background: rgba(239, 68, 68, 0.1);
 }
 
-.invite-local-note {
-  border-left: 2px solid var(--accent-cyan);
-  padding-left: 10px;
-  color: var(--text-muted) !important;
+.invite-error {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #f87171;
 }
 
 /* ==========================================================================

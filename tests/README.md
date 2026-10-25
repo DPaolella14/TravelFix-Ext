@@ -47,6 +47,7 @@ TF_URL=http://localhost:8090/index.html node tests/run-all.js
 | `test-ocean` | Ocean panel quick picks and Close Explorer |
 | `test-xss` | 10 injection vectors: chat (live + persisted), collaborators, geocoder results, generated destinations, stay dialog, plan titles, map pin labels |
 | `test-signin` | Account UI: log in / sign up tabs, password rules, reveal toggle, wrong-password handling, session persistence, HttpOnly cookie, magic link, sign out |
+| `test-invites` | Invite dialog, invite link opened signed out, sign up and join, editor edits reach the owner, viewer edits are put back (needs `TF_SERVER_LOG`) |
 | `test-plansync` | Server-side plans across two browser contexts: upload on first sign-in, a plan made on one device appears on the other, edits and deletes sync, sign-out returns to local plans |
 | `test-smoke` | Nothing broke: normal rendering, images, map markers, 3D globe init |
 
@@ -92,6 +93,30 @@ same 404 as for a plan that does not exist. Also validation, oversized bodies,
 malformed ids and cross-origin rejection. It creates three accounts, so on a
 server that has already run `test_auth.py` it can hit the per-IP signup limit;
 restart the server between the two.
+
+## The invites suites
+
+The raw invite token only ever exists in the email, so with mail off both
+invite suites read links from the server's console output:
+
+```bash
+DB_PATH=/tmp/tf-test.db python server.py > /tmp/tf-server.log 2>&1
+TF_DB=/tmp/tf-test.db TF_SERVER_LOG=/tmp/tf-server.log python tests/test_invites.py
+TF_SERVER_LOG=/tmp/tf-server.log node tests/test-invites.js
+```
+
+`tests/test_invites.py`, 59 checks: the token is 32 bytes and only its SHA-256
+is stored, it expires in exactly 7 days, it works once, the role is fixed at
+creation, a forwarded link fails for another account, an unverified address
+cannot send or accept, expired and revoked links are refused exactly like
+made-up ones, editors can edit but not invite, viewers can only read, and
+every invite endpoint gives a non-member the same 404 as a plan that does not
+exist. It writes to the database directly, so use a throwaway one.
+
+`tests/test-invites.js` drives the real UI in three browsers: the owner sends
+an invite from the dialog, the invitee opens the link signed out, signs up
+with that address and lands in the plan; an editor's change reaches the
+owner, and a viewer's edit is put back.
 
 ## Using this as a ground-truth set
 

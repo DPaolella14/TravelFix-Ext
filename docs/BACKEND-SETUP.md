@@ -158,9 +158,27 @@ table, and a plan you are not a member of answers 404, the same as one that
 does not exist. `tests/test_plans.py` checks that for every endpoint. If two
 devices edit the same plan at once, the last save wins.
 
-**Not built yet:** invites and shared trips (the `editor` and `viewer` roles
-exist in the schema but nothing grants them yet), and group chat. See
-`BACKEND-SCOPE.md`.
+**Sharing a plan.** The owner of a plan can invite someone by email from the
+planner, as a Co-Planner (`editor`, can change the plan) or a Traveler
+(`viewer`, can see it). The invite email carries a link that:
+
+- holds a token of 32 random bytes, of which only the SHA-256 is stored;
+- works once, and expires after 7 days;
+- grants exactly the role chosen when it was sent;
+- only works for a signed-in account whose verified email address is the one
+  invited, so a forwarded link is useless to anyone else.
+
+Only an owner with a verified address can send invites (an unverified account
+could be anyone's throwaway, and mail from it costs your domain its
+reputation), and invites are rate limited per account and per IP. The owner
+can see and revoke open invites. Unknown, expired, used and revoked links all
+get the same answer. Someone a plan was shared with can remove it from their
+own list; only the owner can delete it.
+
+With email not configured, the invite link is printed to the server console,
+the same as sign-in links.
+
+**Not built yet:** group chat. See `BACKEND-SCOPE.md`.
 
 ---
 

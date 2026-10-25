@@ -5,11 +5,11 @@
  * nowhere else: there is no server, so nobody else can see them and nothing
  * arrives from anyone else.
  *
- * Group chat with other people, and invitations by email, need a backend
- * (accounts, a database, a mail provider and a realtime transport). That is
- * being scoped separately — see docs/BACKEND-SCOPE.md. Until it exists this
- * module deliberately does NOT invent collaborators or generate replies, so
- * nothing on screen implies a conversation that is not happening.
+ * Inviting people is done per plan (js/planner.js, /api/plans/<id>/invites),
+ * and group chat will reach the same plan members once messages are stored
+ * server-side — see docs/BACKEND-SCOPE.md. Until then this module
+ * deliberately does NOT invent collaborators or generate replies, so nothing
+ * on screen implies a conversation that is not happening.
  */
 
 export const CHAT_IS_LOCAL_ONLY = true;
@@ -108,14 +108,6 @@ export class TravelFixChat {
       this.state.unreadCounts[channel] = 0;
       this.saveState();
     }
-  }
-
-  /**
-   * Whether real invitations are possible. False until a backend exists; the
-   * UI reads this rather than hardcoding the assumption in two places.
-   */
-  canInvite() {
-    return !CHAT_IS_LOCAL_ONLY;
   }
 
   sendMessage(text, cardData = null) {
