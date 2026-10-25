@@ -178,6 +178,26 @@ own list; only the owner can delete it.
 With email not configured, the invite link is printed to the server console,
 the same as sign-in links.
 
+**Your data.** The account menu has two controls:
+
+- **Download my data** (`GET /api/account/export`) saves a JSON file with
+  everything stored about the account: the account itself, every plan it is
+  on with that plan's contents, invites it sent and invites addressed to it,
+  and its sessions and sign-in history (times, browser, requesting IP). It
+  never includes password or token hashes.
+- **Delete account** (`POST /api/account/delete`) asks for the email address
+  typed out, and the password if the account has one. It erases the account,
+  its sessions and sign-in tokens, the plans it owns (for everyone they were
+  shared with, as the dialog says), its place on other people's plans, and
+  any invites addressed to it. The database runs with `secure_delete` on and
+  checkpoints its write-ahead log after a deletion, so the erased rows are
+  overwritten in the file rather than left recoverable in free pages.
+
+  Two things are outside this. A backup taken before a deletion still holds
+  the account, so backups need their own retention limit. And with email not
+  configured, the server console prints each link with its address, so
+  saved server output needs the same treatment.
+
 **Not built yet:** group chat. See `BACKEND-SCOPE.md`.
 
 ---
@@ -271,8 +291,6 @@ If you would rather close it, the change is in `handle_signup` in
 - **CSP still allows `'unsafe-inline'` for styles**, because the markup uses
   inline `style` attributes throughout. Tightening it means moving those into
   the stylesheet first.
-- **No account deletion or data export.** If real people ever use this in the
-  EU, GDPR requires both.
 - **SQLite with WAL** is fine for one process and modest traffic. Concurrent
   writes across processes need Postgres.
 - **No audit log.** Sign-ins are not recorded beyond the session row.

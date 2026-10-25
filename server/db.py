@@ -104,6 +104,9 @@ def connect():
         conn = sqlite3.connect(DB_PATH, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA foreign_keys = ON')
+        # Deleted rows are overwritten, not just unlinked, so a deleted
+        # account cannot be read back out of the file's free pages.
+        conn.execute('PRAGMA secure_delete = ON')
         _local.conn = conn
     return conn
 
@@ -459,6 +462,57 @@ def accept_invite(invite_id, user_id):
             (row['plan_id'], user_id, row['role'], ts)
         )
     return row['role']
+
+
+# ----------------------------------------------------- export and erasure
+
+def export_user(user_id):
+    """Everything stored about one account, as plain rows. No hashes."""
+    conn = connect()
+    user = conn.execute(
+        'SELECT email, email_normalised, display_name, email_verified_at, password_set_at,'
+        ' password_hash IS NOT NULL AS has_password, created_at FROM users WHERE id = ?',
+        (user_id,)
+    ).fetchone()
+    if user is None:
+        return None
+    return {
+        'user': user,
+        'plans': list_plans_for(user_id),
+        'invites_sent': conn.execute(
+            'SELECT plan_id, email_normalised, role, created_at, expires_at, accepted_at,'
+            ' revoked_at FROM invites WHERE invited_by = ? ORDER BY id', (user_id,)
+        ).fetchall(),
+        'invites_received': conn.execute(
+            'SELECT plan_id, role, created_at, expires_at, accepted_at, revoked_at'
+            ' FROM invites WHERE email_normalised = ? ORDER BY id', (user['email_normalised'],)
+        ).fetchall(),
+        'sessions': conn.execute(
+            'SELECT created_at, expires_at, user_agent FROM sessions WHERE user_id = ? ORDER BY id',
+            (user_id,)
+        ).fetchall(),
+        'login_tokens': conn.execute(
+            'SELECT created_at, expires_at, consumed_at, request_ip FROM login_tokens'
+            ' WHERE user_id = ? ORDER BY id', (user_id,)
+        ).fetchall(),
+    }
+
+
+def delete_user(user_id, email_normalised):
+    """
+    Erase an account. Cascades remove its sessions, sign-in tokens, the plans
+    it owns (with their members and invites) and its memberships elsewhere.
+    Invites addressed to it on other people's plans carry its email address,
+    so they go too. Returns True if the account existed.
+    """
+    conn = connect()
+    with conn:
+        conn.execute('DELETE FROM invites WHERE email_normalised = ?', (email_normalised,))
+        cur = conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
+    # Fold the write-ahead log back into the file so the erased pages do not
+    # linger there either; secure_delete has already zeroed them in place.
+    conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    return cur.rowcount == 1
 
 
 def purge_expired():

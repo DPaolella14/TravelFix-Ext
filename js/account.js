@@ -331,8 +331,8 @@ export class TravelFixAccount {
         <p class="account-note">We sent a link to confirm this address. You can
            request another one below.</p>`}
       <p class="account-note">
-        Your travel plans are still stored in this browser only — moving them
-        into your account is the next step.
+        Your travel plans are saved in your account, so they are on any device
+        you sign in on.
       </p>
       <div class="account-menu-actions">
         <button type="button" class="btn btn-outline btn-sm" id="btn-change-password">
@@ -342,6 +342,14 @@ export class TravelFixAccount {
           <button type="button" class="btn btn-outline btn-sm" id="btn-resend-verify">
             Resend verification
           </button>`}
+      </div>
+      <div class="account-menu-actions account-data-actions">
+        <a class="btn btn-outline btn-sm" id="btn-export-data" href="/api/account/export" download>
+          Download my data
+        </a>
+        <button type="button" class="btn btn-outline btn-sm account-delete-link" id="btn-delete-account">
+          Delete account
+        </button>
       </div>
       <div class="quick-modal-buttons">
         <button type="button" class="btn btn-secondary" data-close>Close</button>
@@ -364,6 +372,11 @@ export class TravelFixAccount {
       this.openChangePasswordDialog();
     });
 
+    container.querySelector('#btn-delete-account').addEventListener('click', () => {
+      close();
+      this.openDeleteAccountDialog();
+    });
+
     const resend = container.querySelector('#btn-resend-verify');
     if (resend) {
       resend.addEventListener('click', async () => {
@@ -371,6 +384,83 @@ export class TravelFixAccount {
         await this.requestMagicLink(this.user.email);
       });
     }
+  }
+
+  openDeleteAccountDialog() {
+    const hasPassword = !!this.user.hasPassword;
+    const email = this.user.email;
+
+    const { container, close } = this.mountDialog(`
+      <h3>Delete your account</h3>
+      <p>This erases your account and everything saved with it, and cannot be undone:</p>
+      <ul class="account-delete-list">
+        <li>your plans, <b>including for anyone you shared them with</b>;</li>
+        <li>your place on plans other people shared with you;</li>
+        <li>invites sent to your address, and your sign-in history.</li>
+      </ul>
+      <p class="account-note">
+        Want a copy first? <a href="/api/account/export" download>Download your data</a>.
+        Plans kept in this browser while signed out are not affected.
+      </p>
+
+      <form id="delete-form" class="account-form" novalidate>
+        <label class="schedule-label" for="delete-confirm">Type <b>${esc(email)}</b> to confirm</label>
+        <input type="email" id="delete-confirm" class="account-input" autocomplete="off" required>
+
+        ${hasPassword ? `
+          <label class="schedule-label" for="delete-password">Your password</label>
+          <input type="password" id="delete-password" class="account-input"
+                 autocomplete="current-password" required>
+        ` : ''}
+
+        <div class="account-error" id="delete-error" hidden></div>
+
+        <div class="quick-modal-buttons">
+          <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+          <button type="submit" class="btn btn-danger" id="btn-delete-submit" disabled>Delete account</button>
+        </div>
+      </form>`);
+
+    const form = container.querySelector('#delete-form');
+    const confirm = container.querySelector('#delete-confirm');
+    const errorBox = container.querySelector('#delete-error');
+    const submit = container.querySelector('#btn-delete-submit');
+
+    // The button stays disabled until the address is typed exactly; the
+    // server checks it again, so this is only to prevent a slip.
+    confirm.addEventListener('input', () => {
+      submit.disabled = confirm.value.trim().toLowerCase() !== email.toLowerCase();
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorBox.hidden = true;
+      const body = { confirmEmail: confirm.value };
+      if (hasPassword) body.password = container.querySelector('#delete-password').value;
+
+      submit.disabled = true;
+      submit.textContent = 'Deleting…';
+      try {
+        const { ok, data } = await this.api('/api/account/delete', { method: 'POST', body });
+        if (!ok) {
+          submit.disabled = false;
+          submit.textContent = 'Delete account';
+          errorBox.textContent = data.message || 'Your account could not be deleted.';
+          errorBox.hidden = false;
+          return;
+        }
+        close();
+        await this.refresh();
+        this.toast(data.message || 'Your account has been deleted.', 'success');
+      } catch (err) {
+        submit.disabled = false;
+        submit.textContent = 'Delete account';
+        errorBox.textContent = 'Could not reach the server.';
+        errorBox.hidden = false;
+        console.warn('TravelFixAccount: account deletion failed', err);
+      }
+    });
+    setTimeout(() => confirm.focus(), 50);
   }
 
   openChangePasswordDialog() {
