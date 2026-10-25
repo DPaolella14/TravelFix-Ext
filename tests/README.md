@@ -48,6 +48,7 @@ TF_URL=http://localhost:8090/index.html node tests/run-all.js
 | `test-xss` | 10 injection vectors: chat (live + persisted), collaborators, geocoder results, generated destinations, stay dialog, plan titles, map pin labels |
 | `test-signin` | Account UI: log in / sign up tabs, password rules, reveal toggle, wrong-password handling, session persistence, HttpOnly cookie, magic link, sign out |
 | `test-invites` | Invite dialog, invite link opened signed out, sign up and join, editor edits reach the owner, viewer edits are put back (needs `TF_SERVER_LOG`) |
+| `test-groupchat` | Two browsers on one shared plan: local notes when signed out, the plan's conversation when signed in, messages both ways by polling, author and role shown, markup shown as text, unread count, nothing shared left in localStorage (needs `TF_SERVER_LOG`) |
 | `test-account` | Account menu: download my data as a dated JSON file, delete-account dialog (typed address, wrong password refused, signed out afterwards) |
 | `test-plansync` | Server-side plans across two browser contexts: upload on first sign-in, a plan made on one device appears on the other, edits and deletes sync, sign-out returns to local plans |
 | `test-smoke` | Nothing broke: normal rendering, images, map markers, 3D globe init |
@@ -121,6 +122,14 @@ afterwards the account cannot sign in, its owned plans are gone for the
 people they were shared with, it is gone from other people's plans, and its
 address appears neither in the database nor in the raw bytes of the file.
 `tests/test-account.js` drives the account menu's download and delete.
+
+`tests/test_chat.py` (47 checks) covers `/api/plans/<id>/messages` the same
+way: members of every role can read and post, `?after=` returns only newer
+messages, a non-member gets the same 404 as a missing plan on both endpoints,
+control and bidi-override characters are stripped, over-long or non-string
+text is refused, card fields outside each card type are dropped, bad card
+values (unknown type, non-id destination, oversized lists, non-numeric or
+negative numbers) are refused, and a deleted plan takes its chat with it.
 
 `tests/test-invites.js` drives the real UI in three browsers: the owner sends
 an invite from the dialog, the invitee opens the link signed out, signs up

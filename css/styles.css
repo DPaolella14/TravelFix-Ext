@@ -1083,6 +1083,17 @@ html, body {
   line-height: 1.45;
   color: var(--text-primary);
 }
+.msg-failed,
+.msg-pending {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.msg-failed {
+  color: #f87171;
+}
+
 .msg-self .msg-bubble {
   background: linear-gradient(135deg, rgba(0, 242, 254, 0.2), rgba(99, 102, 241, 0.25));
   border-color: rgba(0, 242, 254, 0.4);

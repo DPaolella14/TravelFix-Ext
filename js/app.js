@@ -45,6 +45,7 @@ class TravelFixApp {
       if (this.ui) {
         this.ui.renderPlannerBadge();
       }
+      this.syncChatToPlan();
     });
 
     // 3. Initialize Social Group & DM Chat Engine
@@ -52,8 +53,10 @@ class TravelFixApp {
       onMessageReceived: (channel, msg) => {
         if (!this.ui) return;
         this.ui.updateChatBadge();
-        // Only repaint the stream when the chat tab is actually on screen.
+        // Only repaint the stream when the chat tab is actually on screen;
+        // a message that arrives while it is on screen has been read.
         if (this.ui.isChatPanelVisible()) {
+          this.chat.markRead();
           this.ui.renderChat();
         }
       },
@@ -169,6 +172,17 @@ class TravelFixApp {
       return fromUrl;
     }
     try { return sessionStorage.getItem(key); } catch (err) { return null; }
+  }
+
+  /**
+   * The chat follows the active plan: a plan saved to the account has a
+   * shared conversation; anything else is this browser's own notes.
+   */
+  syncChatToPlan() {
+    if (!this.chat || !this.planner) return;
+    const onServer = this.planner.remoteUser && this.planner.roleOf();
+    if (onServer) this.chat.attachPlan(this.planner.plan.id);
+    else this.chat.detach();
   }
 
   forgetPendingInvite() {

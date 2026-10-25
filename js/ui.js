@@ -1627,10 +1627,11 @@ export class TravelFixUI {
     if (!messages.length) {
       this.dockedChatMessages.innerHTML = `
         <div class="chat-empty-state">
-          <span>📝</span>
+          <span>${this.chat.isShared() ? '💬' : '📝'}</span>
           <h4>No messages yet</h4>
-          <p>Notes you write here stay in this browser. Share a day from your
-             plan, or jot down what you are still deciding.</p>
+          <p>${this.chat.isShared()
+            ? 'Everyone this plan is shared with sees what you write here. Invite people from the planner.'
+            : 'Notes you write here stay in this browser. Sign in to talk with the people you share a plan with.'}</p>
         </div>
       `;
       return;
@@ -1659,6 +1660,8 @@ export class TravelFixUI {
             </div>
             
             ${msg.text ? `<div class="msg-bubble">${esc(msg.text)}</div>` : ''}
+            ${msg.failed ? `<div class="msg-failed">${esc(msg.failed)}</div>` : ''}
+            ${msg.pending ? '<div class="msg-pending">Sending…</div>' : ''}
 
             <!-- Render Embedded Card if present -->
             ${msg.card ? this.renderChatCard(msg.card) : ''}
@@ -1667,7 +1670,7 @@ export class TravelFixUI {
             <div class="msg-reactions-row">
               ${Object.entries(msg.reactions || {}).map(([emoji, count]) => `
                 <button class="reaction-pill" data-emoji="${esc(emoji)}" data-msg-id="${esc(msg.id)}">
-                  ${emoji} <small>${count}</small>
+                  ${esc(emoji)} <small>${esc(count)}</small>
                 </button>
               `).join('')}
               <div class="quick-react-actions">
