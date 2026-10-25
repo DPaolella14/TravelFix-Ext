@@ -16,12 +16,22 @@ Endpoints
     POST /api/auth/set-password   { password }        -> needs a session
     GET  /api/auth/me             current user or null
     POST /api/auth/logout         clears the session
+
+    GET    /api/plans             plans the caller is a member of
+    POST   /api/plans             { title, plan } -> new plan, caller is owner
+    GET    /api/plans/<id>        one plan
+    PUT    /api/plans/<id>        { title, plan } -> owner or editor
+    DELETE /api/plans/<id>        owner only
+
+Every plan route needs a session. A plan the caller is not a member of
+answers 404, exactly as a plan that does not exist does.
 """
 
 import http.cookies
 import http.server
 import json
 import os
+import re
 import socketserver
 import sys
 import urllib.parse
@@ -40,6 +50,11 @@ from config import (
 
 STATIC_ROOT = str(ROOT)
 MAX_BODY_BYTES = 8 * 1024  # a sign-in request is tiny; refuse anything larger
+MAX_PLAN_BYTES = 256 * 1024  # a long itinerary is a few tens of KB
+MAX_PLANS_PER_USER = 100
+MAX_PLAN_TITLE = 200
+
+PLAN_PATH = re.compile(r'^/api/plans/([1-9][0-9]{0,17})$')
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -79,12 +94,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def client_ip(self):
         return self.client_address[0] if self.client_address else 'unknown'
 
-    def read_json(self):
+    def read_json(self, max_bytes=MAX_BODY_BYTES):
         try:
             length = int(self.headers.get('Content-Length') or 0)
         except ValueError:
             return None
-        if length <= 0 or length > MAX_BODY_BYTES:
+        if length <= 0 or length > max_bytes:
             return None
         try:
             return json.loads(self.rfile.read(length).decode('utf-8'))
@@ -157,6 +172,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_me()
         if parsed.path == '/api/auth/verify':
             return self.handle_verify(parsed.query)
+        if parsed.path == '/api/plans':
+            return self.handle_list_plans()
+        match = PLAN_PATH.match(parsed.path)
+        if match:
+            return self.handle_get_plan(int(match.group(1)))
         if parsed.path.startswith('/api/'):
             return self.send_json(404, {'error': 'not_found'})
         if parsed.path == '/server/travelfix.db' or parsed.path.startswith('/.env'):
@@ -175,6 +195,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_request_link()
         if parsed.path == '/api/auth/logout':
             return self.handle_logout()
+        if parsed.path == '/api/plans':
+            return self.handle_create_plan()
+        return self.send_json(404, {'error': 'not_found'})
+
+    def do_PUT(self):
+        match = PLAN_PATH.match(urllib.parse.urlsplit(self.path).path)
+        if match:
+            return self.handle_update_plan(int(match.group(1)))
+        return self.send_json(404, {'error': 'not_found'})
+
+    def do_DELETE(self):
+        match = PLAN_PATH.match(urllib.parse.urlsplit(self.path).path)
+        if match:
+            return self.handle_delete_plan(int(match.group(1)))
         return self.send_json(404, {'error': 'not_found'})
 
     # --------------------------------------------------- password accounts
@@ -400,6 +434,142 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         auth.sign_out(self.session_cookie())
         header, value = self.cookie_header('', 0)
         return self.send_json(200, {'ok': True}, extra_headers=[(header, value)])
+
+
+    # --------------------------------------------------------------- plans
+
+    def plan_payload(self, row):
+        data = json.loads(row['data'])
+        # The server owns the id and title; whatever the client stored inside
+        # the document for them is overwritten on the way out.
+        data['id'] = str(row['id'])
+        data['title'] = row['title']
+        return {
+            'id': str(row['id']),
+            'title': row['title'],
+            'role': row['role'],
+            'updatedAt': row['updated_at'],
+            'plan': data,
+        }
+
+    def require_user(self):
+        """Returns the session row, or None after answering 401."""
+        row = auth.session_user(self.session_cookie())
+        if row is None:
+            self.send_json(401, {'error': 'not_signed_in'})
+        return row
+
+    def read_plan_body(self):
+        """Returns (title, data_json, error). Validates shape and size, not content."""
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            length = 0
+        if length > MAX_PLAN_BYTES:
+            # Read and discard a bounded amount so the client gets the 413
+            # rather than a reset connection, then drop the connection.
+            remaining = min(length, 4 * MAX_PLAN_BYTES)
+            while remaining > 0:
+                chunk = self.rfile.read(min(remaining, 64 * 1024))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            self.close_connection = True
+            return None, None, (413, {'error': 'too_large', 'message': 'That plan is too large to save.'})
+
+        payload = self.read_json(MAX_PLAN_BYTES)
+        if not isinstance(payload, dict):
+            return None, None, (400, {'error': 'bad_request'})
+
+        title = payload.get('title')
+        plan = payload.get('plan')
+        if not isinstance(title, str) or not isinstance(plan, dict):
+            return None, None, (400, {'error': 'bad_request'})
+        title = title.strip()
+        if not title or len(title) > MAX_PLAN_TITLE:
+            return None, None, (400, {
+                'error': 'invalid_title',
+                'message': f'A plan title must be 1 to {MAX_PLAN_TITLE} characters.'
+            })
+        if not isinstance(plan.get('days', []), list):
+            return None, None, (400, {'error': 'bad_request'})
+
+        # Ids and titles are the server's; never store the client's copy.
+        plan = {k: v for k, v in plan.items() if k not in ('id', 'title')}
+        return title, json.dumps(plan, separators=(',', ':')), None
+
+    def plan_not_found(self):
+        # One answer for "does not exist" and "not yours", so ids cannot be
+        # probed to learn which plans exist.
+        return self.send_json(404, {'error': 'not_found'})
+
+    def handle_list_plans(self):
+        row = self.require_user()
+        if row is None:
+            return
+        plans = [self.plan_payload(p) for p in db.list_plans_for(row['user_id'])]
+        return self.send_json(200, {'plans': plans})
+
+    def handle_get_plan(self, plan_id):
+        row = self.require_user()
+        if row is None:
+            return
+        plan = db.get_plan_for(plan_id, row['user_id'])
+        if plan is None:
+            return self.plan_not_found()
+        return self.send_json(200, {'plan': self.plan_payload(plan)})
+
+    def handle_create_plan(self):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+        row = self.require_user()
+        if row is None:
+            return
+        title, data, error = self.read_plan_body()
+        if error:
+            return self.send_json(*error)
+        if db.count_owned_plans(row['user_id']) >= MAX_PLANS_PER_USER:
+            return self.send_json(409, {
+                'error': 'too_many_plans',
+                'message': f'An account can hold up to {MAX_PLANS_PER_USER} plans.'
+            })
+        plan_id = db.create_plan(row['user_id'], title, data)
+        return self.send_json(201, {'plan': self.plan_payload(db.get_plan_for(plan_id, row['user_id']))})
+
+    def handle_update_plan(self, plan_id):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+        row = self.require_user()
+        if row is None:
+            return
+        # Membership first: a non-member learns nothing, not even whether
+        # their body would have been valid.
+        current = db.get_plan_for(plan_id, row['user_id'])
+        if current is None:
+            return self.plan_not_found()
+        title, data, error = self.read_plan_body()
+        if error:
+            return self.send_json(*error)
+        if current['role'] not in db.WRITE_ROLES:
+            return self.send_json(403, {'error': 'read_only'})
+        if not db.update_plan_for(plan_id, row['user_id'], title, data):
+            return self.plan_not_found()
+        return self.send_json(200, {'plan': self.plan_payload(db.get_plan_for(plan_id, row['user_id']))})
+
+    def handle_delete_plan(self, plan_id):
+        if not self.same_origin():
+            return self.send_json(403, {'error': 'bad_origin'})
+        row = self.require_user()
+        if row is None:
+            return
+        current = db.get_plan_for(plan_id, row['user_id'])
+        if current is None:
+            return self.plan_not_found()
+        if current['role'] != 'owner':
+            return self.send_json(403, {'error': 'owner_only'})
+        if not db.delete_plan_for(plan_id, row['user_id']):
+            return self.plan_not_found()
+        return self.send_json(200, {'ok': True})
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):

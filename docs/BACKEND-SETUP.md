@@ -147,10 +147,20 @@ emailed links as a second way in (and the way back when a password is
 forgotten), email verification, password changes, sessions in an HttpOnly
 cookie for 30 days, rate limiting, and sign-out.
 
-**Not built yet:** travel plans still live in the browser's localStorage, not
-in your account. Signing in on another device gives you an empty planner. That
-is the next step, and it is the one that makes invites and shared trips
-possible — see `BACKEND-SCOPE.md`.
+**Plans live in your account.** Signed in, the planner reads and saves plans
+through `/api/plans`, so the same plans appear on any device you sign in on.
+The first time an account is used, any plans already in that browser are
+uploaded into it. Signed out, the planner uses the browser's localStorage
+exactly as before, and an account's plans are never written there.
+
+Each plan has one owner. Every plan query goes through the `plan_members`
+table, and a plan you are not a member of answers 404, the same as one that
+does not exist. `tests/test_plans.py` checks that for every endpoint. If two
+devices edit the same plan at once, the last save wins.
+
+**Not built yet:** invites and shared trips (the `editor` and `viewer` roles
+exist in the schema but nothing grants them yet), and group chat. See
+`BACKEND-SCOPE.md`.
 
 ---
 

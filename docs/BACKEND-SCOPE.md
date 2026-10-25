@@ -221,7 +221,9 @@ collaboration specifically.
 
 ## Current state, for reference
 
-Until any of this is built, the app is honest about what it is:
+Steps 1 and 2 are built: accounts, and plans stored server-side with
+membership-scoped queries (see `BACKEND-SETUP.md`). Invites and chat are not,
+and the app is honest about that:
 
 - `js/chat.js` exports `CHAT_IS_LOCAL_ONLY = true` and seeds nothing.
 - `chat.canInvite()` returns `false`, and the invite button explains why

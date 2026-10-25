@@ -136,7 +136,13 @@ class TravelFixApp {
     });
 
     // 7. Sign-in (talks to the local API; degrades quietly if it is absent)
-    this.account = new TravelFixAccount();
+    // Signed in, plans come from the server; signed out, from this browser.
+    this.account = new TravelFixAccount({
+      onChange: async (user) => {
+        const changed = await this.planner.useAccount(user);
+        if (changed && this.ui) this.ui.renderPlanner();
+      }
+    });
 
     // Default to 2D Map mode view
     this.switchViewMode('map');
