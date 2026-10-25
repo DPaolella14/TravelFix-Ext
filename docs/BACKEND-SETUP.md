@@ -240,7 +240,10 @@ If you would rather close it, the change is in `handle_signup` in
   served over HTTPS.
 - State-changing endpoints check `Origin`/`Referer` behind `SameSite`.
 - Security headers on every response, including a CSP.
-- `.env` and the database are explicitly not servable over HTTP.
+- Only `index.html`, `css/`, `js/` and `assets/` are served. That is an
+  allow-list decided on the decoded path, so `server/` (code and database,
+  including SQLite's `-wal`/`-shm` files), `tests/`, `docs/` and dotfiles
+  answer 404 however the path is spelled.
 
 **Known limitations, stated rather than hidden:**
 
@@ -265,10 +268,11 @@ python server.py            # terminal 1
 python tests/test_auth.py   # terminal 2
 ```
 
-83 checks covering the happy path plus password strength rules, hash storage
+125 checks covering the happy path plus password strength rules, hash storage
 and salting, token replay, expiry, superseded links, enumeration, login
 timing, injection, CSRF, cookie flags, rate limiting, oversized bodies, and
-whether `.env` is reachable over HTTP.
+whether anything outside the site's own files (`.env`, the database, server
+source) can be fetched over HTTP by any spelling of its path.
 
 The browser-side flow has its own suite:
 

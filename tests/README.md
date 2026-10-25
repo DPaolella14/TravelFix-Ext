@@ -60,11 +60,21 @@ python server.py            # terminal 1
 python tests/test_auth.py   # terminal 2
 ```
 
-83 checks: validation, password strength rules, hash storage and per-password
+125 checks: validation, password strength rules, hash storage and per-password
 salting, account enumeration, login timing equivalence, SQL injection
 attempts, token storage and replay, expiry, superseded links, password
 changes, cookie flags, cross-origin rejection, security headers, whether
-`.env` is reachable over HTTP, rate limiting, and oversized bodies.
+anything outside `index.html`, `css/`, `js/` and `assets/` is reachable over
+HTTP (encoded, doubled-slash, dot-segment and case variants, HEAD included),
+rate limiting, and oversized bodies.
+
+It writes to the database directly, including login tokens for the account
+with the lowest id, so point the server at a throwaway database rather than
+your own:
+
+```bash
+DB_PATH=/tmp/tf-test.db python server.py
+```
 
 ## The plans API suite
 

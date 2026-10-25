@@ -49,6 +49,9 @@ from config import (
 )
 
 STATIC_ROOT = str(ROOT)
+# The only top-level folders the site serves, besides index.html. Everything
+# else in the repo (server/, tests/, docs/, the database) is never reachable.
+STATIC_DIRS = ('css', 'js', 'assets')
 MAX_BODY_BYTES = 8 * 1024  # a sign-in request is tiny; refuse anything larger
 MAX_PLAN_BYTES = 256 * 1024  # a long itinerary is a few tens of KB
 MAX_PLANS_PER_USER = 100
@@ -179,9 +182,56 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_get_plan(int(match.group(1)))
         if parsed.path.startswith('/api/'):
             return self.send_json(404, {'error': 'not_found'})
-        if parsed.path == '/server/travelfix.db' or parsed.path.startswith('/.env'):
+        return self.serve_static(super().do_GET)
+
+    def do_HEAD(self):
+        return self.serve_static(super().do_HEAD)
+
+    # -------------------------------------------------------------- static
+
+    def static_path(self):
+        """
+        The site-relative path of a file the site is allowed to serve, or None.
+
+        An allow-list, not a deny-list: the repo root also holds the server,
+        its database and the tests, and a deny-list has to anticipate every
+        spelling of those (percent-encoding, doubled slashes, dot segments,
+        case on Windows, SQLite's -wal and -shm sidecars). This decides on the
+        decoded path, by segment, and then checks where the file really is.
+        """
+        # Not urlsplit: it reads '//server/x' as a host name.
+        raw = self.path.split('?', 1)[0].split('#', 1)[0]
+        try:
+            path = urllib.parse.unquote(raw, errors='strict')
+        except UnicodeDecodeError:
+            return None
+        if path in ('/', '/index.html'):
+            return 'index.html'
+        if not path.startswith('/') or '\\' in path or '\x00' in path:
+            return None
+
+        segments = path[1:].split('/')
+        if len(segments) < 2 or segments[0] not in STATIC_DIRS:
+            return None
+        if any(not s or s.startswith('.') for s in segments):
+            return None  # empty, '.', '..' and dotfiles
+
+        # realpath resolves symlinks and, on Windows, returns the on-disk
+        # spelling, so this one comparison refuses links that lead elsewhere
+        # and case variants like /JS/App.js.
+        expected = os.path.join(os.path.realpath(STATIC_ROOT), *segments)
+        if os.path.realpath(expected) != expected or not os.path.isfile(expected):
+            return None
+        return '/'.join(segments)
+
+    def serve_static(self, serve):
+        relative = self.static_path()
+        if relative is None:
             return self.send_json(404, {'error': 'not_found'})
-        return super().do_GET()
+        # Hand the stdlib handler the clean path only, so its own decoding
+        # and directory listing never see what the client actually sent.
+        self.path = '/' + relative
+        return serve()
 
     def do_POST(self):
         parsed = urllib.parse.urlsplit(self.path)
