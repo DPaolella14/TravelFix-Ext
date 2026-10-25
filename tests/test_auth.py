@@ -10,6 +10,7 @@ Run the server first, then:
 Standard library only, same as the server.
 """
 
+import http.client
 import http.cookiejar
 import json
 import os
@@ -279,9 +280,44 @@ def main():
 
     # ------------------------------------------------- secrets not served
     print('\n--- private files are not served ---')
-    for path in ['/.env', '/server/travelfix.db']:
-        status, _, _ = request(path)
+    # Sent byte for byte, so no client library tidies the path first.
+    host = urllib.parse.urlsplit(BASE).netloc
+
+    def raw_status(path, method='GET'):
+        conn = http.client.HTTPConnection(host, timeout=10)
+        try:
+            conn.putrequest(method, path, skip_accept_encoding=True)
+            conn.endheaders()
+            res = conn.getresponse()
+            res.read()
+            return res.status
+        finally:
+            conn.close()
+
+    # The site itself must still load, or the 404s below prove nothing.
+    for path in ['/', '/index.html', '/css/styles.css', '/js/app.js',
+                 '/assets/textures/earth-dark.jpg', '/index.html?v=1']:
+        status = raw_status(path)
+        check(f'{path} is served', status == 200, f'status={status}')
+
+    private = [
+        '/.env', '/.env.example', '/.gitignore', '/.git/config', '/.git/HEAD',
+        '/server/travelfix.db', '/server/travelfix.db-wal', '/server/travelfix.db-shm',
+        '/server/travelfix%2Edb', '/server/travelfix%2edb-wal', '/server%2Ftravelfix.db',
+        '/%73erver/travelfix.db', '/server//travelfix.db', '//server/travelfix.db',
+        '/./server/travelfix.db', '/js/../server/travelfix.db', '/js/%2E%2E/server/travelfix.db',
+        '/js/..%2Fserver/travelfix.db', '/SERVER/travelfix.db', '/Server/Travelfix.DB',
+        '/server\\travelfix.db', '/js/..\\server\\travelfix.db', '/server/travelfix.db%00.js',
+        '/server/config.py', '/server/app.py', '/server.py', '/README.md',
+        '/docs/BACKEND-SETUP.md', '/tests/test_auth.py', '/tests/package.json',
+        '/JS/app.js', '/js/', '/js', '/assets/', '/vendor/three.min.js',
+    ]
+    for path in private:
+        status = raw_status(path)
         check(f'{path} is not downloadable', status == 404, f'status={status}')
+    for path in ['/server/travelfix.db', '/server/travelfix.db-wal', '/server/config.py']:
+        status = raw_status(path, 'HEAD')
+        check(f'HEAD {path} is 404', status == 404, f'status={status}')
 
     # -------------------------------------------------------- rate limit
     print('\n--- rate limiting ---')
