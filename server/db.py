@@ -283,12 +283,11 @@ def delete_session(token_hash):
 
 WRITE_ROLES = ('owner', 'editor')
 
-_PLAN_COLUMNS = 'p.id, p.owner_id, p.title, p.data, p.created_at, p.updated_at, m.role'
-
 
 def list_plans_for(user_id):
     return connect().execute(
-        f'SELECT {_PLAN_COLUMNS} FROM plans p'
+        'SELECT p.id, p.owner_id, p.title, p.data, p.created_at, p.updated_at, m.role'
+        ' FROM plans p'
         ' JOIN plan_members m ON m.plan_id = p.id'
         ' WHERE m.user_id = ?'
         ' ORDER BY p.created_at, p.id',
@@ -304,7 +303,8 @@ def count_owned_plans(user_id):
 
 def get_plan_for(plan_id, user_id):
     return connect().execute(
-        f'SELECT {_PLAN_COLUMNS} FROM plans p'
+        'SELECT p.id, p.owner_id, p.title, p.data, p.created_at, p.updated_at, m.role'
+        ' FROM plans p'
         ' JOIN plan_members m ON m.plan_id = p.id'
         ' WHERE p.id = ? AND m.user_id = ?',
         (plan_id, user_id)
