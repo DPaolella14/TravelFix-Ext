@@ -1835,13 +1835,15 @@ export class TravelFixUI {
     container.innerHTML = `
       <div class="quick-modal-overlay tf-schedule-overlay">
         <div class="quick-modal-content schedule-dialog">
-          <h3>${esc(copy.title)}</h3>
-          <p>${esc(copy.body)}</p>
+          <h3></h3>
+          <p></p>
           <div class="quick-modal-buttons">
             <button type="button" class="btn btn-primary btn-sched-cancel">Got it</button>
           </div>
         </div>
       </div>`;
+    container.querySelector('h3').textContent = copy.title;
+    container.querySelector('p').textContent = copy.body;
     document.body.appendChild(container);
     const close = () => container.remove();
     container.querySelector('.btn-sched-cancel').addEventListener('click', close);
