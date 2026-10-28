@@ -8,9 +8,13 @@ needs an install, and they live entirely in this folder.
 
 ```bash
 cd tests
-npm install
+npm ci
 npx playwright install chromium   # skip if Chromium is already available
 ```
+
+`npm ci` installs exactly what `package-lock.json` records and fails if the
+lockfile and `package.json` disagree. To change a dependency, edit
+`package.json`, run `npm install` once to update the lockfile, and commit both.
 
 ## Running
 

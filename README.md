@@ -89,7 +89,7 @@ Regression tests live in `tests/` and have their own dependencies; the site
 itself needs nothing installed. See [tests/README.md](tests/README.md).
 
 ```bash
-cd tests && npm install && npx playwright install chromium
+cd tests && npm ci && npx playwright install chromium
 cd .. && python server.py &
 node tests/run-all.js      # browser suites
 python tests/test_auth.py  # sign-in API, stdlib only
